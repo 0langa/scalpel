@@ -86,7 +86,7 @@ It is intentionally minimal:
   "mcpServers": {
     "scalpel": {
       "command": "node",
-      "args": ["./dist/src/index.js"]
+      "args": ["./dist/index.js"]
     }
   }
 }

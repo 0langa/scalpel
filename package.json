@@ -4,13 +4,17 @@
   "private": true,
   "description": "Precise, atomic file editing for code and text over MCP.",
   "type": "module",
+  "main": "./dist/index.js",
   "packageManager": "pnpm@11.5.0",
   "engines": {
     "node": ">=22"
   },
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "dev": "tsx src/index.ts",
-    "build": "tsc -p tsconfig.json",
+    "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint .",
     "format": "biome format --write .",
