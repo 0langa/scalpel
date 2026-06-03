@@ -7,3 +7,12 @@ coverage/
 .DS_Store
 Thumbs.db
 .vs/
+.github/agents/typescript-mcp-expert.agent.md
+tmp/
+.*
+!.gitignore
+!.gitattributes
+!.editorconfig
+docs/kimi-export-session_-20260603-122048.md
+docs/KIMI_TEST_PROMPT.md
+docs/REVIEW_ACTION_PLAN.md

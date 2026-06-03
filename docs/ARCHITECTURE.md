@@ -1,49 +1,42 @@
-# Scalpel Server Architecture And Scaffold Plan
+# Scalpel Server Architecture
 
-This document turns [SPEC.md](../SPEC.md) into a concrete build plan for the first implementation of the Scalpel MCP server.
+This document maps the current Scalpel implementation to the original design and records the contract we want future changes to preserve.
 
 ## Goal
 
-Build a local-first MCP server for precise, deterministic file editing over `stdio`, using TypeScript, the official MCP TypeScript SDK, and Zod 4. The server should optimize for correctness, explicit failure modes, and clean migration to newer SDK versions.
+Scalpel is a local-first MCP server for deterministic file editing over `stdio`. It is designed for coding agents that need precise edits, predictable failures, and strong workspace-safety defaults.
 
-## Design Decisions
+## Current Shape
 
 ### Runtime model
 
-- Local server only for v1
-- `stdio` transport only
-- Single process
-- No background daemon state
-- No persistent database
+- local subprocess
+- `stdio` transport
+- one process
+- no persistent background state
+- workspace-root fallback to the process working directory when `SCALPEL_ROOTS` is unset
 
-### SDK boundary
+### Layering
 
-The MCP SDK should be treated as a thin adapter layer around a pure editing core.
+- `src/index.ts`: process bootstrap and transport wiring
+- `src/mcp/*`: SDK-specific registration, schema wiring, and MCP result adaptation
+- `src/tools/*`: one thin handler per public tool
+- `src/core/*`: file metadata, path policy, mutation preconditions, text operations, diff generation, and atomic writes
 
-That gives us:
+The key design rule remains: the MCP adapter layer should stay thin enough that a future SDK migration mostly touches `src/mcp/*`.
 
-- lower migration cost from SDK v1.x to v2
-- easier testing without MCP harnesses
-- clearer separation between tool contracts and editing logic
+## Implemented Tool Surface
 
-### Safety model
+### Read-only
 
-The implementation should strengthen the original spec in these places:
-
-- Reject ambiguous matches by default
-- Restrict all paths to configured workspace roots
-- Reject symlinks and reparse-point traversal
-- Preserve line endings unless an operation explicitly changes content
-- Use optimistic concurrency on all mutating tools
-
-## Tool Surface
-
-### MVP tools
-
-- `read`
 - `stat`
+- `read`
 - `list_dir`
 - `grep`
+- `diff`
+
+### Mutating
+
 - `create`
 - `patch`
 - `batch_edit`
@@ -51,430 +44,137 @@ The implementation should strengthen the original spec in these places:
 - `delete_range`
 - `replace_between_markers`
 - `append`
+- `prepend`
 - `move`
 
-### Deferred tools
+## Contract Highlights
 
-- `prepend`
-- standalone `diff`
+### Path safety
 
-These can be added after the edit core is stable because every mutating tool already supports `dry_run`.
+All tool entrypoints resolve paths through shared policy code.
 
-## Protocol Shape
+Current guarantees:
 
-### MCP result model
+- target paths must remain under configured roots
+- absolute paths are allowed only when still contained by a configured root
+- existing intermediate path segments are checked with `lstat()`
+- symlink traversal is rejected
+- hidden paths can be denied centrally
 
-Each tool should use:
+This logic lives primarily in `src/core/path-policy.ts`.
 
-- Zod 4 input schema
-- Zod 4 output schema where practical
-- `structuredContent` for machine-readable responses
-- `content` with a compact text summary for clients that still rely on text
-- `isError: true` for tool-level failures
+### Mutation preconditions
 
-### Error model
+Existing-file mutators share a common precondition helper in `src/core/mutation.ts`.
 
-Keep the custom domain error object from the spec, but return it inside MCP-native tool results.
+Current guarantees:
 
-Suggested shape:
+- optional `expected_sha256`
+- optional `expected_mtime_ms`
+- failure with `CONCURRENCY_CONFLICT` when caller expectations do not match the current snapshot
+
+This keeps concurrency checks consistent across tools instead of hand-rolling them per handler.
+
+### Atomic writes
+
+Content-replacement mutations route through the shared atomic write helper.
+
+Current guarantee:
+
+- best-effort atomic replace on the local filesystem through temp-file write plus rename
+
+This is intentionally a little narrower than a full crash-durability claim.
+
+### MCP result shape
+
+The server returns:
+
+- typed success payloads
+- tool-level failures with `isError: true`
+- structured error payloads under:
 
 ```json
 {
   "ok": false,
   "error": {
-    "code": "STRING_NOT_FOUND",
-    "message": "old_string not found",
-    "path": "C:\\repo\\src\\main.ts",
-    "details": {}
+    "code": "STRING_NOT_UNIQUE",
+    "message": "old_string matched more than once"
   }
 }
 ```
 
-### Concurrency model
-
-All mutating tools should optionally require one of:
-
-- `expected_sha256`
-- `expected_mtime_ms`
-
-If provided and the file changed since the caller last read it, fail before mutation.
-
-## Project Layout
-
-```text
-scalpel/
-  docs/
-    ARCHITECTURE.md
-    STACK.md
-  src/
-    index.ts
-    mcp/
-      server.ts
-      register-tools.ts
-      result.ts
-      annotations.ts
-    tools/
-      read.ts
-      stat.ts
-      list-dir.ts
-      grep.ts
-      create.ts
-      patch.ts
-      batch-edit.ts
-      insert.ts
-      delete-range.ts
-      replace-between-markers.ts
-      append.ts
-      move.ts
-      schemas/
-        common.ts
-        read.ts
-        stat.ts
-        list-dir.ts
-        grep.ts
-        create.ts
-        patch.ts
-        batch-edit.ts
-        insert.ts
-        delete-range.ts
-        replace-between-markers.ts
-        append.ts
-        move.ts
-    core/
-      config.ts
-      errors.ts
-      path-policy.ts
-      fs-types.ts
-      file-metadata.ts
-      line-index.ts
-      line-endings.ts
-      read-file.ts
-      write-file-atomic.ts
-      temp-path.ts
-      diff.ts
-      search.ts
-      matchers.ts
-      edit-session.ts
-      operations/
-        create-file.ts
-        patch-file.ts
-        batch-edit-file.ts
-        insert-into-file.ts
-        delete-range-from-file.ts
-        replace-between-markers-in-file.ts
-        append-to-file.ts
-        move-path.ts
-    infra/
-      logger.ts
-      env.ts
-      sha256.ts
-  tests/
-    unit/
-      core/
-      tools/
-    integration/
-      stdio-server.test.ts
-      inspector-smoke.test.ts
-    fixtures/
-      files/
-```
-
-## Module Responsibilities
-
-### `src/index.ts`
-
-- bootstrap process
-- load config from env
-- create MCP server
-- connect `StdioServerTransport`
-
-### `src/mcp/*`
-
-- SDK-specific code only
-- tool registration
-- annotations
-- adaptation from domain results to MCP result objects
-
-### `src/tools/*`
-
-- one file per public tool
-- validate input
-- call core operations
-- translate core results to tool outputs
-
-These files should stay thin.
-
-### `src/core/*`
-
-This is the real product.
-
-Responsibilities:
+That shape is generated centrally in `src/mcp/result.ts`.
 
-- path normalization and root confinement
-- metadata reads
-- exact match discovery
-- line and marker indexing
-- edit planning
-- dry-run diff generation
-- atomic write execution
-- concurrency validation
+## Text Operation Semantics
 
-### `src/core/operations/*`
+### Exact replacement tools
 
-Pure file-editing use cases. Each operation should accept typed inputs and return a typed domain result. No MCP imports here.
+`patch` and `batch_edit` use exact string replacement planning from shared core logic.
 
-## Core Types
+Current rule:
 
-### Config
+- default occurrence is `"unique"`
+- ambiguous matches fail instead of guessing
 
-```ts
-export interface ScalpelConfig {
-  roots: string[];
-  allowHiddenPaths: boolean;
-  maxReadBytes: number;
-  maxDiffBytes: number;
-  maxGrepResults: number;
-  logLevel: "silent" | "error" | "info" | "debug";
-}
-```
+### Line insertion
 
-### Domain result
+`insert` is line-oriented rather than raw-string concatenation.
 
-```ts
-export interface SuccessResult<T> {
-  ok: true;
-  data: T;
-}
+Current rule:
 
-export interface FailureResult {
-  ok: false;
-  error: {
-    code: string;
-    message: string;
-    path?: string;
-    details?: Record<string, unknown>;
-  };
-}
+- inserted content is normalized to the file's EOL before splicing
+- content without a trailing newline is promoted into a full inserted line
 
-export type DomainResult<T> = SuccessResult<T> | FailureResult;
-```
+### Marker-bounded tools
 
-### File snapshot
+Marker-based operations use unique line-marker lookup.
 
-```ts
-export interface FileSnapshot {
-  absolutePath: string;
-  content: string;
-  encoding: "utf8";
-  eol: "\n" | "\r\n" | "mixed" | "none";
-  sizeBytes: number;
-  lineCount: number;
-  sha256: string;
-  mtimeMs: number;
-}
-```
+Current rules:
 
-## Filesystem Policy
+- marker matches must be unique
+- `delete_range` removes marker lines inclusively
+- `replace_between_markers` preserves marker lines exactly once
+- `replace_between_markers.new_content` must not repeat either marker
 
-### Path normalization
+### Empty-file reads
 
-Before any operation:
+`read` explicitly succeeds on empty files and returns a stable empty-file range contract.
 
-1. Resolve input path against a configured root if relative
-2. Normalize separators
-3. Resolve parent directories
-4. Reject if final target escapes all configured roots
-5. Reject if target or traversed path component is a symlink or reparse point
+## Testing Strategy
 
-### Atomic writes
+### Automated verification
 
-Mutating operations should follow this flow:
+The current baseline is:
 
-1. Read and validate current file state
-2. Produce proposed content in memory
-3. If `dry_run`, return diff only
-4. Write temp file in the same directory
-5. Flush file contents
-6. Rename temp file into place
-7. Re-read metadata and return final snapshot info
+- `pnpm lint`
+- `pnpm typecheck`
+- `pnpm test`
+- `pnpm build`
 
-### Large file strategy
+### Regression coverage
 
-- `read` should stream ranged reads when possible
-- mutating tools can still read the whole file for v1
-- impose `maxReadBytes` and `maxDiffBytes` guards
+Regression tests now cover:
 
-## Tool Semantics Refinements
+- empty-file `read`
+- structured MCP failures
+- intermediate symlink traversal rejection
+- invalid regex handling in `grep`
+- concurrency conflict detection in non-patch mutators
+- `insert` newline normalization
+- `replace_between_markers` marker-safety behavior
 
-### `patch`
+### Real-client validation
 
-- default mode should be `occurrence: "unique"`
-- if multiple matches are found, fail with `STRING_NOT_UNIQUE`
-- `"first"` and `"all"` should be explicit caller choices
+Kimi Code is the main real-client smoke path for now:
 
-### `batch_edit`
+- project-local MCP config in `.kimi-code/mcp.json`
+- reusable validation prompt in `docs/KIMI_TEST_PROMPT.md`
+- canonical human-readable test report in `tmp/scalpel-mcp-test-report.md`
 
-- validate the full edit set against the same starting snapshot
-- apply edits in order against an in-memory buffer
-- if one edit fails, return `ATOMIC_FAILURE` and do not write
+## Near-Term Priorities
 
-### Marker tools
+The current implementation is production-usable for local testing, but these are still the most likely follow-up areas:
 
-- if a marker appears more than once and the caller did not disambiguate, fail
-- do not silently use the first matching pair
-
-### `append`
-
-- preserve O(1) append behavior where possible
-- if file metadata is needed for concurrency or line totals, fetch it separately
-
-## Diff Strategy
-
-Use unified diff for all previewable mutating tools.
-
-Diff generation belongs in `src/core/diff.ts` and should:
-
-- preserve file path headers
-- preserve final newline semantics
-- short-circuit if diff exceeds configured limits
-
-## Logging
-
-Logging should be structured and low overhead.
-
-Log:
-
-- startup config summary
-- tool invocation name
-- tool duration
-- failure codes
-- rejected path attempts
-
-Do not log:
-
-- full file contents
-- secrets from environment
-- huge diffs by default
-
-## Test Strategy
-
-### Unit tests
-
-Focus on:
-
-- path policy
-- line ending preservation
-- exact and ambiguous match detection
-- atomic batch behavior
-- marker disambiguation
-- dry-run no-mutation guarantees
-- concurrency mismatch failures
-
-### Property tests
-
-Use generated inputs to verify invariants such as:
-
-- dry-run never mutates
-- applying a no-op patch preserves hash
-- line counts stay valid after edits
-- batch validation either fully applies or fully fails
-
-### Integration tests
-
-- boot server over stdio
-- call real MCP tools through the SDK client
-- verify `structuredContent`
-- verify `isError` behavior
-
-## Initial Scaffold Sequence
-
-### Phase 1: repo bootstrap
-
-Create:
-
-- `package.json`
-- `tsconfig.json`
-- `eslint.config.mjs`
-- formatter config
-- `vitest.config.ts`
-- `.editorconfig`
-- `.gitattributes`
-- `src/index.ts`
-- `src/mcp/server.ts`
-- `src/core/errors.ts`
-- `src/core/config.ts`
-
-### Phase 2: vertical slice
-
-Implement one complete read-only slice:
-
-- `stat`
-- `read`
-- `list_dir`
-
-This proves:
-
-- config loading
-- path policy
-- MCP wiring
-- schema/result pattern
-
-### Phase 3: first mutator
-
-Implement `patch` end to end with:
-
-- exact matching
-- ambiguity failure
-- dry-run diff
-- atomic write
-- optimistic concurrency
-
-This becomes the reference pattern for the rest.
-
-### Phase 4: compositional mutators
-
-Implement:
-
-- `batch_edit`
-- `insert`
-- `delete_range`
-- `replace_between_markers`
-
-### Phase 5: search and append
-
-Implement:
-
-- `grep`
-- `append`
-- `move`
-
-## Recommended First Milestone
-
-The first milestone should ship a usable server with:
-
-- `read`
-- `stat`
-- `list_dir`
-- `patch`
-
-That is enough to validate the protocol boundary, test real-world client compatibility, and lock the internal architecture before the rest of the tool surface expands.
-
-## Open Decisions To Lock Before Coding
-
-- SDK package line: stable `v1.x`
-- ESM package layout: yes
-- workspace root source: env var plus current working directory fallback
-- ambiguity default: fail unless explicitly disambiguated
-- concurrency field: `expected_sha256` preferred, `expected_mtime_ms` optional fallback
-- diff hard limit: configurable
-
-## Scaffold Acceptance Criteria
-
-The scaffold is ready when:
-
-- `pnpm build` passes
-- `pnpm test` passes
-- `pnpm lint` passes
-- MCP Inspector can connect over stdio
-- `read`, `stat`, `list_dir`, and `patch` work end to end
-- a failed `dry_run: false` mutation cannot partially write a file
+- strengthen or document any remaining durability limits in atomic writes
+- decide whether `patch` should also accept `expected_mtime_ms` for full symmetry
+- expand Kimi regression coverage as new edge cases are found

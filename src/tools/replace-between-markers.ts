@@ -1,9 +1,14 @@
 import { type ScalpelConfig } from "../core/config.js";
 import { createUnifiedDiff } from "../core/diff.js";
-import { readFileSnapshot } from "../core/file-metadata.js";
 import { failure, success, type DomainResult } from "../core/errors.js";
+import { readSnapshotForMutation } from "../core/mutation.js";
 import { resolveWorkspacePath } from "../core/path-policy.js";
-import { findLineMarkerIndex, splitLinesWithEndings } from "../core/text.js";
+import {
+  findLineMarkerIndex,
+  normalizeLineInsertion,
+  splitLinesWithEndings,
+  validateReplacementDoesNotRepeatMarkers
+} from "../core/text.js";
 import { writeFileAtomic } from "../core/write-file-atomic.js";
 
 type ReplaceBetweenMarkersInput = {
@@ -12,6 +17,8 @@ type ReplaceBetweenMarkersInput = {
   end_marker: string;
   new_content: string;
   dry_run?: boolean | undefined;
+  expected_sha256?: string | undefined;
+  expected_mtime_ms?: number | undefined;
 };
 
 type ReplaceBetweenMarkersResult = {
@@ -28,13 +35,18 @@ export async function replaceBetweenMarkersTool(
   const resolved = await resolveWorkspacePath({
     path: input.path,
     roots: config.roots,
-    operation: "write"
+    operation: "write",
+    allowHiddenPaths: config.allowHiddenPaths
   });
   if (!resolved.ok) {
     return resolved;
   }
 
-  const snapshot = await readFileSnapshot(resolved.data);
+  const snapshot = await readSnapshotForMutation({
+    path: resolved.data,
+    expected_sha256: input.expected_sha256,
+    expected_mtime_ms: input.expected_mtime_ms
+  });
   if (!snapshot.ok) {
     return snapshot;
   }
@@ -54,9 +66,20 @@ export async function replaceBetweenMarkersTool(
     return failure("MARKER_NOT_FOUND", "end_marker must appear after start_marker", resolved.data);
   }
 
+  const markerValidation = validateReplacementDoesNotRepeatMarkers(
+    input.new_content,
+    input.start_marker,
+    input.end_marker
+  );
+  if (!markerValidation.ok) {
+    return markerValidation;
+  }
+
+  const eol = snapshot.data.eol === "\r\n" ? "\r\n" : "\n";
+  const replacementLines = normalizeLineInsertion(input.new_content, eol);
   const nextContent = [
     ...lines.slice(0, startMarker.data + 1),
-    input.new_content,
+    ...replacementLines,
     ...lines.slice(endMarker.data)
   ].join("");
   const diff = createUnifiedDiff(resolved.data, snapshot.data.content, nextContent);

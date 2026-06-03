@@ -11,7 +11,11 @@ export function toolSuccess(data: Record<string, unknown>): CallToolResult {
 
 export function toolFailure(errorResult: FailureResult): CallToolResult {
   return {
-    content: [{ type: "text", text: JSON.stringify({ error: errorResult.error }) }],
+    content: [{ type: "text", text: JSON.stringify({ ok: false, error: errorResult.error }) }],
+    structuredContent: {
+      ok: false,
+      error: errorResult.error
+    },
     isError: true
   };
 }

@@ -23,7 +23,8 @@ export async function moveTool(
   const source = await resolveWorkspacePath({
     path: input.source,
     roots: config.roots,
-    operation: "write"
+    operation: "write",
+    allowHiddenPaths: config.allowHiddenPaths
   });
   if (!source.ok) {
     return source;
@@ -32,7 +33,8 @@ export async function moveTool(
   const destination = await resolveWorkspacePath({
     path: input.destination,
     roots: config.roots,
-    operation: "write"
+    operation: "write",
+    allowHiddenPaths: config.allowHiddenPaths
   });
   if (!destination.ok) {
     return destination;

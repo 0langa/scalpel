@@ -1,4 +1,5 @@
 import { failure, success, type DomainResult } from "./errors.js";
+import { countLines } from "./line-endings.js";
 
 export type PatchOccurrence = "unique" | "first" | "all" | number;
 
@@ -9,6 +10,23 @@ export function splitLinesWithEndings(content: string): string[] {
 
   const matches = content.match(/[^\n]*\n|[^\n]+$/g);
   return matches ?? [];
+}
+
+export function ensureTrailingLineEnding(content: string, eol: "\n" | "\r\n"): string {
+  if (content.length === 0 || content.endsWith("\n")) {
+    return content;
+  }
+
+  return `${content}${eol}`;
+}
+
+export function normalizeLineInsertion(content: string, eol: "\n" | "\r\n"): string[] {
+  const normalized = ensureTrailingLineEnding(content, eol);
+  return normalized.length === 0 ? [] : splitLinesWithEndings(normalized);
+}
+
+export function countInsertedLines(content: string): number {
+  return countLines(ensureTrailingLineEnding(content, "\n"));
 }
 
 export function planExactReplace(
@@ -89,6 +107,21 @@ export function findLineMarkerIndex(lines: string[], marker: string): DomainResu
   }
 
   return success(firstIndex);
+}
+
+export function validateReplacementDoesNotRepeatMarkers(
+  content: string,
+  startMarker: string,
+  endMarker: string
+): DomainResult<true> {
+  if (content.includes(startMarker) || content.includes(endMarker)) {
+    return failure(
+      "MARKER_NOT_ALLOWED_IN_REPLACEMENT",
+      "new_content must not include the start or end marker"
+    );
+  }
+
+  return success(true);
 }
 
 function findMatches(content: string, needle: string): number[] {

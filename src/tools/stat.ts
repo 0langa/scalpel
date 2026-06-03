@@ -9,7 +9,8 @@ export async function statTool(
   const resolved = await resolveWorkspacePath({
     path: input.path,
     roots: config.roots,
-    operation: "read"
+    operation: "read",
+    allowHiddenPaths: config.allowHiddenPaths
   });
 
   if (!resolved.ok) {

@@ -61,4 +61,22 @@ describe("read-only tools", () => {
       }
     });
   });
+
+  test("read succeeds on an empty file", async () => {
+    await withTempDir(async (root) => {
+      const filePath = join(root, "empty.txt");
+      await writeFile(filePath, "", "utf8");
+
+      const config = createConfig({ roots: [root] });
+      const result = await readTool({ path: "empty.txt" }, config);
+
+      expect(result.ok).toBe(true);
+
+      if (result.ok) {
+        expect(result.data.content).toBe("");
+        expect(result.data.lines).toBe(0);
+        expect(result.data.range).toEqual({ start_line: 1, end_line: 0 });
+      }
+    });
+  });
 });

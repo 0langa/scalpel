@@ -82,6 +82,7 @@ export function registerTools(server: McpServer, config: ScalpelConfig): void {
           z.object({
             name: z.string(),
             path: z.string(),
+            relativePath: z.string(),
             isDirectory: z.boolean(),
             sizeBytes: z.number()
           })
@@ -127,6 +128,7 @@ export function registerTools(server: McpServer, config: ScalpelConfig): void {
         matches: z.array(
           z.object({
             path: z.string(),
+            relativePath: z.string(),
             line: z.number(),
             content: z.string()
           })
@@ -198,7 +200,8 @@ export function registerTools(server: McpServer, config: ScalpelConfig): void {
           })
         ).min(1),
         dry_run: z.boolean().optional(),
-        expected_sha256: z.string().optional()
+        expected_sha256: z.string().optional(),
+        expected_mtime_ms: z.number().optional()
       }),
       outputSchema: z.object({
         absolutePath: z.string(),
@@ -223,7 +226,9 @@ export function registerTools(server: McpServer, config: ScalpelConfig): void {
         line: z.number().int().positive().optional(),
         after_marker: z.string().optional(),
         before_marker: z.string().optional(),
-        dry_run: z.boolean().optional()
+        dry_run: z.boolean().optional(),
+        expected_sha256: z.string().optional(),
+        expected_mtime_ms: z.number().optional()
       }),
       outputSchema: z.object({
         absolutePath: z.string(),
@@ -247,7 +252,9 @@ export function registerTools(server: McpServer, config: ScalpelConfig): void {
         end_line: z.number().int().positive().optional(),
         start_marker: z.string().optional(),
         end_marker: z.string().optional(),
-        dry_run: z.boolean().optional()
+        dry_run: z.boolean().optional(),
+        expected_sha256: z.string().optional(),
+        expected_mtime_ms: z.number().optional()
       }),
       outputSchema: z.object({
         absolutePath: z.string(),
@@ -270,7 +277,9 @@ export function registerTools(server: McpServer, config: ScalpelConfig): void {
         start_marker: z.string().min(1),
         end_marker: z.string().min(1),
         new_content: z.string(),
-        dry_run: z.boolean().optional()
+        dry_run: z.boolean().optional(),
+        expected_sha256: z.string().optional(),
+        expected_mtime_ms: z.number().optional()
       }),
       outputSchema: z.object({
         absolutePath: z.string(),
@@ -290,7 +299,9 @@ export function registerTools(server: McpServer, config: ScalpelConfig): void {
       description: "Append content to the end of a file, creating it if needed.",
       inputSchema: z.object({
         path: z.string().min(1),
-        content: z.string()
+        content: z.string(),
+        expected_sha256: z.string().optional(),
+        expected_mtime_ms: z.number().optional()
       }),
       outputSchema: z.object({
         absolutePath: z.string(),
@@ -309,7 +320,9 @@ export function registerTools(server: McpServer, config: ScalpelConfig): void {
       description: "Prepend content to the beginning of a file, creating it if needed.",
       inputSchema: z.object({
         path: z.string().min(1),
-        content: z.string()
+        content: z.string(),
+        expected_sha256: z.string().optional(),
+        expected_mtime_ms: z.number().optional()
       }),
       outputSchema: z.object({
         absolutePath: z.string(),

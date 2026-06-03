@@ -2,8 +2,8 @@ import { readdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 
 import { type ScalpelConfig } from "../core/config.js";
-import { success, type DomainResult } from "../core/errors.js";
-import { resolveWorkspacePath } from "../core/path-policy.js";
+import { failure, success, type DomainResult } from "../core/errors.js";
+import { resolveWorkspacePath, toRelativeDisplayPath } from "../core/path-policy.js";
 
 type GrepInput = {
   path: string;
@@ -14,6 +14,7 @@ type GrepInput = {
 
 type GrepMatch = {
   path: string;
+  relativePath: string;
   line: number;
   content: string;
 };
@@ -30,7 +31,8 @@ export async function grepTool(
   const resolved = await resolveWorkspacePath({
     path: input.path,
     roots: config.roots,
-    operation: "read"
+    operation: "read",
+    allowHiddenPaths: config.allowHiddenPaths
   });
   if (!resolved.ok) {
     return resolved;
@@ -38,23 +40,49 @@ export async function grepTool(
 
   const matches: GrepMatch[] = [];
   const limit = input.max_results ?? config.maxGrepResults;
-  const matcher = input.regex === true ? new RegExp(input.pattern) : null;
+  const displayRoot = config.roots[0] ?? resolved.data;
+  let matcher: RegExp | null = null;
+  if (input.regex === true) {
+    try {
+      matcher = new RegExp(input.pattern);
+    } catch (error) {
+      return failure(
+        "INVALID_PATTERN",
+        error instanceof Error ? error.message : "Invalid regex pattern",
+        resolved.data
+      );
+    }
+  }
 
-  await visit(resolved.data, async (filePath) => {
+  await visit(resolved.data, config, async (filePath) => {
     if (matches.length >= limit) {
       return;
     }
 
-    const content = await readFile(filePath, "utf8");
-    for (const [index, line] of content.split(/\r\n|\n/).entries()) {
-      const matched = matcher === null ? line.includes(input.pattern) : matcher.test(line);
-      if (matched) {
-        matches.push({ path: filePath, line: index + 1, content: line });
+    try {
+      const info = await stat(filePath);
+      if (info.size > config.maxReadBytes) {
+        return;
       }
 
-      if (matches.length >= limit) {
-        break;
+      const content = await readFile(filePath, "utf8");
+      for (const [index, line] of content.split(/\r\n|\n/).entries()) {
+        const matched = matcher === null ? line.includes(input.pattern) : matcher.test(line);
+        if (matched) {
+          matches.push({
+            path: filePath,
+            relativePath: toRelativeDisplayPath(displayRoot, filePath),
+            line: index + 1,
+            content: line
+          });
+        }
+
+        if (matches.length >= limit) {
+          break;
+        }
       }
+    } catch {
+      // best-effort search: unreadable or binary-like files are skipped
     }
   });
 
@@ -64,12 +92,19 @@ export async function grepTool(
   });
 }
 
-async function visit(path: string, onFile: (filePath: string) => Promise<void>): Promise<void> {
+async function visit(
+  path: string,
+  config: ScalpelConfig,
+  onFile: (filePath: string) => Promise<void>
+): Promise<void> {
   const info = await stat(path);
   if (info.isDirectory()) {
     const children = await readdir(path);
     for (const child of children.sort((left, right) => left.localeCompare(right))) {
-      await visit(join(path, child), onFile);
+      if (!config.allowHiddenPaths && child.startsWith(".")) {
+        continue;
+      }
+      await visit(join(path, child), config, onFile);
     }
     return;
   }

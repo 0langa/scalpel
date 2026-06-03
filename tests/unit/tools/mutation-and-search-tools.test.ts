@@ -12,6 +12,7 @@ import { grepTool } from "../../../src/tools/grep.js";
 import { insertTool } from "../../../src/tools/insert.js";
 import { moveTool } from "../../../src/tools/move.js";
 import { replaceBetweenMarkersTool } from "../../../src/tools/replace-between-markers.js";
+import { statTool } from "../../../src/tools/stat.js";
 import { withTempDir } from "../../helpers/temp.js";
 
 describe("mutation and search tools", () => {
@@ -142,6 +143,49 @@ describe("mutation and search tools", () => {
     });
   });
 
+  test("replace_between_markers rejects replacement content that repeats markers", async () => {
+    await withTempDir(async (root) => {
+      const filePath = join(root, "config.txt");
+      await writeFile(filePath, "before\nBEGIN\nold one\nEND\nafter\n", "utf8");
+
+      const config = createConfig({ roots: [root] });
+      const result = await replaceBetweenMarkersTool(
+        {
+          path: "config.txt",
+          start_marker: "BEGIN",
+          end_marker: "END",
+          new_content: "BEGIN\nfresh line\nEND\n"
+        },
+        config
+      );
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error.code).toBe("MARKER_NOT_ALLOWED_IN_REPLACEMENT");
+      }
+    });
+  });
+
+  test("insert normalizes content inserted after a marker into its own line", async () => {
+    await withTempDir(async (root) => {
+      const filePath = join(root, "main.ts");
+      await writeFile(filePath, "line one\nmarker\nline three\n", "utf8");
+
+      const config = createConfig({ roots: [root] });
+      const result = await insertTool(
+        {
+          path: "main.ts",
+          after_marker: "marker",
+          content: "line two"
+        },
+        config
+      );
+
+      expect(result.ok).toBe(true);
+      await expect(readFile(filePath, "utf8")).resolves.toBe("line one\nmarker\nline two\nline three\n");
+    });
+  });
+
   test("append creates a missing file and appends content", async () => {
     await withTempDir(async (root) => {
       const config = createConfig({ roots: [root] });
@@ -196,6 +240,58 @@ describe("mutation and search tools", () => {
 
       if (result.ok) {
         expect(result.data.total_matches).toBe(2);
+      }
+    });
+  });
+
+  test("grep returns a domain error for invalid regex patterns", async () => {
+    await withTempDir(async (root) => {
+      await mkdir(join(root, "src"), { recursive: true });
+      await writeFile(join(root, "src", "one.ts"), "export const value = 1;\n", "utf8");
+
+      const config = createConfig({ roots: [root] });
+      const result = await grepTool(
+        {
+          path: "src",
+          pattern: "[unterminated",
+          regex: true
+        },
+        config
+      );
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error.code).toBe("INVALID_PATTERN");
+      }
+    });
+  });
+
+  test("insert rejects stale expected_sha256 values", async () => {
+    await withTempDir(async (root) => {
+      const filePath = join(root, "main.ts");
+      await writeFile(filePath, "line one\nline three\n", "utf8");
+
+      const config = createConfig({ roots: [root] });
+      const before = await statTool({ path: "main.ts" }, config);
+      if (!before.ok || before.data.sha256 === undefined) {
+        throw new Error("expected initial stat to include sha256");
+      }
+
+      await writeFile(filePath, "changed\nline three\n", "utf8");
+
+      const result = await insertTool(
+        {
+          path: "main.ts",
+          line: 2,
+          content: "line two",
+          expected_sha256: before.data.sha256
+        },
+        config
+      );
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error.code).toBe("CONCURRENCY_CONFLICT");
       }
     });
   });

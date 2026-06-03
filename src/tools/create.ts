@@ -1,10 +1,11 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 
 import { type ScalpelConfig } from "../core/config.js";
 import { readFileSnapshot } from "../core/file-metadata.js";
 import { failure, success, type DomainResult } from "../core/errors.js";
 import { resolveWorkspacePath } from "../core/path-policy.js";
+import { writeFileAtomic } from "../core/write-file-atomic.js";
 
 type CreateInput = {
   path: string;
@@ -25,7 +26,8 @@ export async function createTool(
   const resolved = await resolveWorkspacePath({
     path: input.path,
     roots: config.roots,
-    operation: "write"
+    operation: "write",
+    allowHiddenPaths: config.allowHiddenPaths
   });
 
   if (!resolved.ok) {
@@ -38,7 +40,7 @@ export async function createTool(
   }
 
   await mkdir(dirname(resolved.data), { recursive: true });
-  await writeFile(resolved.data, input.content, "utf8");
+  await writeFileAtomic(resolved.data, input.content);
 
   const snapshot = await readFileSnapshot(resolved.data);
   if (!snapshot.ok) {

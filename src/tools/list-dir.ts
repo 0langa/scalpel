@@ -4,11 +4,12 @@ import { join } from "node:path";
 import { type ScalpelConfig } from "../core/config.js";
 import { readPathStat } from "../core/file-metadata.js";
 import { failure, success, type DomainResult } from "../core/errors.js";
-import { resolveWorkspacePath } from "../core/path-policy.js";
+import { resolveWorkspacePath, toRelativeDisplayPath } from "../core/path-policy.js";
 
 type ListDirEntry = {
   name: string;
   path: string;
+  relativePath: string;
   isDirectory: boolean;
   sizeBytes: number;
 };
@@ -25,7 +26,8 @@ export async function listDirTool(
   const resolved = await resolveWorkspacePath({
     path: input.path,
     roots: config.roots,
-    operation: "read"
+    operation: "read",
+    allowHiddenPaths: config.allowHiddenPaths
   });
 
   if (!resolved.ok) {
@@ -36,6 +38,7 @@ export async function listDirTool(
     const children = await readdir(resolved.data);
     const ordered = [...children].sort((left, right) => left.localeCompare(right));
     const entries: ListDirEntry[] = [];
+    const displayRoot = config.roots[0] ?? resolved.data;
 
     for (const child of ordered) {
       const childPath = join(resolved.data, child);
@@ -48,6 +51,7 @@ export async function listDirTool(
       entries.push({
         name: child,
         path: childPath,
+        relativePath: toRelativeDisplayPath(displayRoot, childPath),
         isDirectory: stats.data.isDirectory,
         sizeBytes: stats.data.sizeBytes
       });

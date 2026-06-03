@@ -70,4 +70,48 @@ describe("stdio server", () => {
       await expect(readFile(filePath, "utf8")).resolves.toBe("alpha\ngamma\n");
     });
   }, 15000);
+
+  test("returns structured error payloads for tool failures", async () => {
+    await withTempDir(async (root) => {
+      const filePath = join(root, "sample.txt");
+      await writeFile(filePath, "foo\nbar\nfoo\n", "utf8");
+
+      const transport = new StdioClientTransport({
+        command: "node",
+        args: ["--import", "tsx", "src/index.ts"],
+        cwd: process.cwd(),
+        env: {
+          ...process.env,
+          SCALPEL_ROOTS: root
+        },
+        stderr: "pipe"
+      });
+      transports.push(transport);
+
+      const client = new Client({
+        name: "scalpel-test-client",
+        version: "0.1.0"
+      });
+      clients.push(client);
+
+      await client.connect(transport);
+
+      const patchResult = await client.callTool({
+        name: "patch",
+        arguments: {
+          path: "sample.txt",
+          old_string: "foo",
+          new_string: "qux"
+        }
+      });
+
+      expect(patchResult.isError).toBe(true);
+      expect(patchResult.structuredContent).toMatchObject({
+        ok: false,
+        error: {
+          code: "STRING_NOT_UNIQUE"
+        }
+      });
+    });
+  }, 15000);
 });

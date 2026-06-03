@@ -24,7 +24,8 @@ export async function readTool(
   const resolved = await resolveWorkspacePath({
     path: input.path,
     roots: config.roots,
-    operation: "read"
+    operation: "read",
+    allowHiddenPaths: config.allowHiddenPaths
   });
 
   if (!resolved.ok) {
@@ -34,6 +35,21 @@ export async function readTool(
   const snapshot = await readFileSnapshot(resolved.data);
   if (!snapshot.ok) {
     return snapshot;
+  }
+
+  if (snapshot.data.content.length === 0) {
+    return success({
+      absolutePath: snapshot.data.absolutePath,
+      content: "",
+      lines: 0,
+      size_bytes: snapshot.data.sizeBytes,
+      range: {
+        start_line: 1,
+        end_line: 0
+      },
+      sha256: snapshot.data.sha256,
+      eol: snapshot.data.eol
+    });
   }
 
   const lines = splitLinesWithEndings(snapshot.data.content);

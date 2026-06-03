@@ -63,4 +63,27 @@ describe("resolveWorkspacePath", () => {
       }
     });
   });
+
+  test("rejects traversal through a symlinked directory component", async () => {
+    await withTempDir(async (root) => {
+      const realDir = join(root, "real-dir");
+      const linkedDir = join(root, "linked-dir");
+
+      await mkdir(realDir, { recursive: true });
+      await writeFile(join(realDir, "inside.txt"), "hello\n", "utf8");
+      await symlink(realDir, linkedDir, process.platform === "win32" ? "junction" : "dir");
+
+      const result = await resolveWorkspacePath({
+        path: "linked-dir/inside.txt",
+        roots: [root],
+        operation: "read"
+      });
+
+      expect(result.ok).toBe(false);
+
+      if (!result.ok) {
+        expect(result.error.code).toBe("SYMLINK_NOT_ALLOWED");
+      }
+    });
+  });
 });

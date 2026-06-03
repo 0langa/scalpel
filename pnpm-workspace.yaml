@@ -1,5 +1,7 @@
 allowBuilds:
+  duckdb: set this to true or false
   esbuild: true
+  tesseract.js: set this to true or false
 minimumReleaseAgeExclude:
   - "@jsonjoy.com/fs-core@4.57.6"
   - "@jsonjoy.com/fs-fsa@4.57.6"

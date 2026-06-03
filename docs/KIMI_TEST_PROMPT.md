@@ -7,7 +7,7 @@ Use this prompt inside Kimi Code when the current working directory is this repo
 ```text
 You are validating the connected `scalpel` MCP server in this repository.
 
-Your goal is to exercise all 14 Scalpel tools and verify both normal behavior and at least a few important safety behaviors.
+Your goal is to exercise all 14 Scalpel tools and verify both normal behavior and the current safety contract.
 
 Important constraints:
 - You may use the full repository as your workspace.
@@ -46,15 +46,21 @@ Testing instructions:
 3. Use each of the 14 Scalpel tools at least once.
 4. For mutating tools, verify the result by reading files back afterward.
 5. Include at least these safety checks:
-   - confirm `patch` fails or would fail on ambiguous matches unless disambiguated
+   - confirm `patch` fails on ambiguous matches unless disambiguated
    - confirm a `dry_run` mutation does not actually change file contents
    - confirm `batch_edit` behaves atomically by attempting one valid and one invalid edit in the same batch
+   - confirm `read` succeeds on an empty file
+   - confirm `replace_between_markers` preserves exactly one start marker and one end marker
+   - confirm `replace_between_markers` rejects `new_content` that repeats either marker
+   - confirm `grep` returns a structured failure for an invalid regex
+   - confirm at least one non-`patch` mutating tool rejects a stale `expected_sha256` or `expected_mtime_ms`
 6. Use `grep`, `read`, and `stat` as verification tools, not only as standalone tool demos.
 7. At the end, produce a concise report in `tmp/scalpel-mcp-test-report.md` summarizing:
    - each tool used
    - whether it succeeded
    - any unexpected behavior
    - any likely bugs or rough edges
+   - which safety checks passed or failed
    - whether cleanup was completed
 8. Clean up the temporary test directory when you are done, but keep the final report file in the repo root `tmp/` directory.
 
@@ -65,7 +71,7 @@ Preferred execution style:
 
 Success criteria:
 - all 14 tools are exercised
-- at least 3 safety/behavior checks are performed
+- all required safety checks are performed
 - final report is written
 - repo is left clean except for the intentional final report file in `tmp/`
 
