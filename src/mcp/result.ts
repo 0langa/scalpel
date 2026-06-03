@@ -11,13 +11,24 @@ export function toolSuccess(data: Record<string, unknown>): CallToolResult {
 
 export function toolFailure(errorResult: FailureResult): CallToolResult {
   return {
-    content: [{ type: "text", text: JSON.stringify({ ok: false, error: errorResult.error }) }],
-    structuredContent: {
-      ok: false,
-      error: errorResult.error
-    },
+    content: [{ type: "text", text: formatErrorText(errorResult) }],
     isError: true
   };
+}
+
+function formatErrorText(errorResult: FailureResult): string {
+  const { code, message, path, details } = errorResult.error;
+  let text = `[${code}] ${message}`;
+
+  if (path !== undefined) {
+    text += ` (${path})`;
+  }
+
+  if (details !== undefined) {
+    text += `\n${JSON.stringify(details)}`;
+  }
+
+  return text;
 }
 
 export function toCallToolResult(

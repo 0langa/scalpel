@@ -1,8 +1,0 @@
-{
-  "mcpServers": {
-    "scalpel": {
-      "command": "node",
-      "args": ["./dist/index.js"]
-    }
-  }
-}

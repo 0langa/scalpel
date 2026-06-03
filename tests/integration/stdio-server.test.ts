@@ -106,12 +106,8 @@ describe("stdio server", () => {
       });
 
       expect(patchResult.isError).toBe(true);
-      expect(patchResult.structuredContent).toMatchObject({
-        ok: false,
-        error: {
-          code: "STRING_NOT_UNIQUE"
-        }
-      });
+      expect(JSON.stringify(patchResult.content)).toContain("STRING_NOT_UNIQUE");
+      expect(patchResult.structuredContent).toBeUndefined();
     });
   }, 15000);
 });

@@ -1,0 +1,10 @@
+This file uses mixed line endings intentionally.
+Line 2 has CRLF.
+Line 3 has LF.
+Line 4 has CRLF.
+Line 5 has CRLF.
+Line 6 has LF.
+Line 7 has LF.
+Line 8 has CRLF.
+Line 9 has LF.
+Line 10 has CRLF.

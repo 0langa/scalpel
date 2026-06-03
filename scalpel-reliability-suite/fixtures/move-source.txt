@@ -1,0 +1,8 @@
+This file is intended for move and rename testing.
+It has multiple lines so that read verification after a move is meaningful.
+
+Line 3
+Line 4
+Line 5
+
+End of file.

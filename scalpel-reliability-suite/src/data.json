@@ -1,0 +1,138 @@
+{
+  "project": "ScalpelReliabilitySuite",
+  "version": "1.0.0",
+  "modules": [
+    {
+      "name": "core",
+      "path": "src/core",
+      "files": ["index.ts", "types.ts", "utils.ts"]
+    },
+    {
+      "name": "infra",
+      "path": "src/infra",
+      "files": ["db.ts", "cache.ts", "queue.ts"]
+    },
+    {
+      "name": "tools",
+      "path": "src/tools",
+      "files": ["read.ts", "write.ts", "patch.ts"]
+    }
+  ],
+  "dependencies": {
+    "typescript": "^5.0.0",
+    "vitest": "^1.0.0",
+    "eslint": "^8.0.0"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest",
+    "lint": "eslint src/",
+    "format": "prettier --write src/"
+  },
+  "environments": [
+    {
+      "name": "development",
+      "host": "localhost",
+      "port": 3000,
+      "debug": true,
+      "database": {
+        "host": "localhost",
+        "port": 5432,
+        "name": "scalpel_dev"
+      },
+      "cache": {
+        "host": "localhost",
+        "port": 6379,
+        "ttl": 300
+      }
+    },
+    {
+      "name": "staging",
+      "host": "staging.internal",
+      "port": 3000,
+      "debug": false,
+      "database": {
+        "host": "staging-db.internal",
+        "port": 5432,
+        "name": "scalpel_staging"
+      },
+      "cache": {
+        "host": "staging-cache.internal",
+        "port": 6379,
+        "ttl": 600
+      }
+    },
+    {
+      "name": "production",
+      "host": "api.production.com",
+      "port": 443,
+      "debug": false,
+      "database": {
+        "host": "prod-db.internal",
+        "port": 5432,
+        "name": "scalpel_prod"
+      },
+      "cache": {
+        "host": "prod-cache.internal",
+        "port": 6379,
+        "ttl": 3600
+      }
+    }
+  ],
+  "features": {
+    "fileEditing": true,
+    "batchOperations": true,
+    "diffGeneration": true,
+    "syntaxValidation": true,
+    "autoFormatting": false
+  },
+  "settings": {
+    "maxFileSize": 10485760,
+    "maxBatchSize": 100,
+    "allowedExtensions": [".ts", ".js", ".json", ".md", ".py", ".yaml", ".toml", ".ini"],
+    "blockedPaths": ["node_modules", ".git", "dist", "tmp"],
+    "timeoutMs": 30000
+  },
+  "users": [
+    { "id": 1, "name": "Alice", "role": "admin" },
+    { "id": 2, "name": "Bob", "role": "developer" },
+    { "id": 3, "name": "Carol", "role": "developer" },
+    { "id": 4, "name": "Dave", "role": "viewer" },
+    { "id": 5, "name": "Eve", "role": "viewer" }
+  ],
+  "auditLog": [
+    { "action": "create", "resource": "file", "userId": 1, "timestamp": "2024-01-01T00:00:00Z" },
+    { "action": "read", "resource": "file", "userId": 2, "timestamp": "2024-01-01T01:00:00Z" },
+    { "action": "update", "resource": "file", "userId": 3, "timestamp": "2024-01-01T02:00:00Z" },
+    { "action": "delete", "resource": "file", "userId": 1, "timestamp": "2024-01-01T03:00:00Z" },
+    { "action": "create", "resource": "directory", "userId": 2, "timestamp": "2024-01-01T04:00:00Z" }
+  ],
+  "generatedSchemas": {
+    "schema001": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "active": { "type": "boolean" }
+      }
+    },
+    "schema002": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "age": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "schema003": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "count": { "type": "integer" }
+      }
+    }
+  }
+}

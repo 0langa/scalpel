@@ -1,0 +1,74 @@
+# Scalpel Reliability Suite Deployment Configuration
+# Tests YAML parsing and marker region handling
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: scalpel-config
+data:
+  APP_NAME: "ScalpelReliabilitySuite"
+  APP_VERSION: "1.0.0"
+
+---
+# BEGIN CONFIG BLOCK
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scalpel-api
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: scalpel-api
+  template:
+    metadata:
+      labels:
+        app: scalpel-api
+    spec:
+      containers:
+        - name: api
+          image: scalpel/api:1.0.0
+          ports:
+            - containerPort: 8080
+          env:
+            - name: LOG_LEVEL
+              value: INFO
+# END CONFIG BLOCK
+
+---
+# BEGIN CONFIG BLOCK
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scalpel-worker
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: scalpel-worker
+  template:
+    metadata:
+      labels:
+        app: scalpel-worker
+    spec:
+      containers:
+        - name: worker
+          image: scalpel/worker:1.0.0
+          env:
+            - name: QUEUE_SIZE
+              value: "1000"
+# END CONFIG BLOCK
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: scalpel-service
+spec:
+  selector:
+    app: scalpel-api
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8080

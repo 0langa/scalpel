@@ -1,0 +1,38 @@
+{
+  "manifest_version": 2,
+  "name": "ScalpelReliabilitySuite",
+  "version": "1.0.0",
+  "description": "A comprehensive test project for validating MCP file-editing tools.",
+  "author": "Test Author",
+  "license": "MIT",
+  "permissions": [
+    "fileSystem",
+    "network",
+    "clipboard"
+  ],
+  "background": {
+    "scripts": ["background.js"],
+    "persistent": false
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "css": ["styles.css"]
+    }
+  ],
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
+  "web_accessible_resources": [
+    "assets/*",
+    "templates/*"
+  ],
+  "content_security_policy": "script-src 'self'; object-src 'self'"
+}

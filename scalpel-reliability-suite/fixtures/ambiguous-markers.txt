@@ -1,0 +1,26 @@
+# Ambiguous Markers Test File
+# This file contains duplicated markers to test replace_between_markers
+
+# BEGIN SECTION
+content block A
+# END SECTION
+
+# BEGIN SECTION
+content block B
+# END SECTION
+
+# BEGIN SECTION
+content block C
+# END SECTION
+
+# Some other content here.
+
+# BEGIN SECTION
+content block D
+# END SECTION
+
+# More other content.
+
+# BEGIN UNIQUE
+this is unique
+# END UNIQUE

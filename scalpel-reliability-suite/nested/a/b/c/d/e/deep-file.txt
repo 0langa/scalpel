@@ -1,0 +1,6 @@
+This file is located deep inside the directory tree:
+nested/a/b/c/d/e/deep-file.txt
+
+It exists to test list_dir and read operations on deeply nested paths.
+
+Depth: 5 levels below the project root.
