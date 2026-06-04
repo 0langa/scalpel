@@ -68,8 +68,8 @@ Use this checklist to manually validate all 14 MCP file-editing tools against th
 - [ ] Grep `docs/CONTRIBUTING.md` for `"TODO"` — verify 6 matches (3 unique lines + 3 duplicates)
 - [ ] Grep `fixtures/repeated-strings.txt` for `"alpha"` — verify 33+ matches
 
-### Context Lines
-- [ ] Grep `src/config.py` for `"validate_config"` with `-B 2 -A 2` — verify context is included
+### Current Limits
+- [ ] Grep `src/config.py` for `"validate_config"` — verify matching lines are returned without before/after context
 
 ### Pattern Matching
 - [ ] Grep `src/app.ts` for `"^export"` — verify regex anchor works
@@ -128,8 +128,8 @@ Use this checklist to manually validate all 14 MCP file-editing tools against th
   3. Replace `"003 | ..."` with `"003 | MODIFIED"`
 - [ ] Verify all three changes applied or all failed (atomicity)
 
-### Cross-File Batch
-- [ ] Batch edit across `src/helpers.py` and `src/utils.ts` simultaneously (if supported)
+### Current Scope
+- [ ] Verify `batch_edit` is single-file only; use separate calls for multi-file edits
 
 ### Overlapping Matches
 - [ ] Batch edit `fixtures/repeated-strings.txt` — replace `"alpha"` and `"beta"` in one operation
@@ -144,8 +144,8 @@ Use this checklist to manually validate all 14 MCP file-editing tools against th
 - [ ] Insert at line 25 of `fixtures/numbered-lines.txt` — verify middle insertion
 
 ### Marker-Based Insert
-- [ ] Insert after `"# BEGIN SECTION"` in `fixtures/ambiguous-markers.txt` — verify insertion in first block
-- [ ] Insert before `"# END SECTION"` in `fixtures/ambiguous-markers.txt` — verify insertion before first end marker
+- [ ] Insert after `"# BEGIN SECTION"` in `fixtures/ambiguous-markers.txt` — verify duplicate marker error
+- [ ] Insert before `"# END SECTION"` in `fixtures/ambiguous-markers.txt` — verify duplicate marker error
 
 ### Edge Cases
 - [ ] Insert into `src/empty.ts` — verify first line is created
@@ -161,8 +161,8 @@ Use this checklist to manually validate all 14 MCP file-editing tools against th
 - [ ] Delete lines 46-50 in `fixtures/numbered-lines.txt` — verify last 5 lines removed
 
 ### Marker-Based Deletion
-- [ ] Delete between `# BEGIN SECTION` and `# END SECTION` in `fixtures/ambiguous-markers.txt` — verify first block removed
-- [ ] Delete between `<!-- BEGIN GENERATED SECTION -->` and `<!-- END GENERATED SECTION -->` in `docs/README.md`
+- [ ] Delete between `# BEGIN SECTION` and `# END SECTION` in `fixtures/ambiguous-markers.txt` — verify duplicate marker error
+- [ ] Delete between `<!-- BEGIN GENERATED SECTION -->` and `<!-- END GENERATED SECTION -->` in `docs/README.md` — verify duplicate marker error if markers are not unique
 
 ### Edge Cases
 - [ ] Delete lines 1-1 in `fixtures/numbered-lines.txt` — verify single line deletion
@@ -176,9 +176,9 @@ Use this checklist to manually validate all 14 MCP file-editing tools against th
 - [ ] Replace between `# BEGIN UNIQUE` and `# END UNIQUE` in `fixtures/ambiguous-markers.txt` — verify replacement is exact
 
 ### Duplicate Markers
-- [ ] Replace between `# BEGIN SECTION` and `# END SECTION` in `fixtures/ambiguous-markers.txt` — observe which block is targeted
-- [ ] Replace between `// BEGIN GENERATED SECTION` and `// END GENERATED SECTION` in `src/app.ts`
-- [ ] Replace between `<!-- BEGIN GENERATED SECTION -->` and `<!-- END GENERATED SECTION -->` in `docs/README.md`
+- [ ] Replace between `# BEGIN SECTION` and `# END SECTION` in `fixtures/ambiguous-markers.txt` — verify duplicate marker error
+- [ ] Replace between `// BEGIN GENERATED SECTION` and `// END GENERATED SECTION` in `src/app.ts` — verify duplicate marker error if markers are not unique
+- [ ] Replace between `<!-- BEGIN GENERATED SECTION -->` and `<!-- END GENERATED SECTION -->` in `docs/README.md` — verify duplicate marker error if markers are not unique
 
 ### YAML Markers
 - [ ] Replace between `# BEGIN CONFIG BLOCK` and `# END CONFIG BLOCK` in `config/deployment.yaml`
@@ -192,7 +192,7 @@ Use this checklist to manually validate all 14 MCP file-editing tools against th
 
 ### Basic Append
 - [ ] Append `"New line at end"` to `fixtures/tiny.txt` — verify it becomes line 2
-- [ ] Append `"\nNew log entry"` to `logs/app.log` — verify log continuity
+- [ ] Append `"\nNew changelog entry"` to `docs/CHANGELOG.md` — verify content is added at end
 
 ### Empty File
 - [ ] Append `"first"` to `src/empty.ts` — verify file now has 1 line

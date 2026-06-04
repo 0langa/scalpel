@@ -4,7 +4,7 @@ Precise, atomic file editing for code and text over MCP.
 
 ## Status
 
-Working TypeScript MCP server with a tested `stdio` transport, 14 tools, structured MCP failures, optimistic concurrency for existing-file mutations, and workspace-confined path policy.
+Working TypeScript MCP server with a tested `stdio` transport, 14 tools, MCP tool failures via `isError: true`, optimistic concurrency for existing-file mutations, and workspace-confined path policy.
 
 ## Implemented Tools
 
@@ -46,10 +46,12 @@ pnpm build
 Verify:
 
 ```bash
-pnpm lint
 pnpm typecheck
 pnpm test
+pnpm build
 ```
+
+Known current issue: `pnpm lint` is configured, but it currently scans TypeScript fixtures under `scalpel-reliability-suite/` that are outside `tsconfig.json`, so it fails until the lint scope is corrected.
 
 ## Runtime Behavior
 
@@ -58,7 +60,7 @@ pnpm test
 - Existing symlinks in the traversed path are rejected.
 - Hidden paths are blocked when `allowHiddenPaths` is disabled.
 - Mutating tools return unified diffs for `dry_run` previews.
-- MCP failures are returned with `isError: true` and structured error payloads.
+- MCP failures are returned with `isError: true` and text containing the Scalpel error code. Failure `structuredContent` is not currently emitted.
 
 ## Edit Semantics
 
@@ -84,24 +86,17 @@ SCALPEL_ROOTS=/repo pnpm dev
 
 ## Docs
 
+- [SCALPEL_MASTER_HANDBOOK.md](./SCALPEL_MASTER_HANDBOOK.md)
+- [SCALPEL_MASTER_HANDBOOK.pdf](./SCALPEL_MASTER_HANDBOOK.pdf)
+- [DEVELOPER_ROADMAP.md](./DEVELOPER_ROADMAP.md)
+- [DEVELOPER_ROADMAP.html](./DEVELOPER_ROADMAP.html)
+- [SCALPEL_AGENT_CONTEXT.md](./SCALPEL_AGENT_CONTEXT.md)
 - [SPEC.md](./SPEC.md)
 - [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)
+- [docs/CURRENT_STATE.md](./docs/CURRENT_STATE.md)
+- [docs/TOOL_CONTRACTS.md](./docs/TOOL_CONTRACTS.md)
+- [docs/SAFETY_MODEL.md](./docs/SAFETY_MODEL.md)
+- [docs/TESTING_AND_RELIABILITY.md](./docs/TESTING_AND_RELIABILITY.md)
+- [docs/AUDIT.md](./docs/AUDIT.md)
+- [docs/DOCS_MAINTENANCE.md](./docs/DOCS_MAINTENANCE.md)
 - [docs/STACK.md](./docs/STACK.md)
-- [docs/KIMI_TEST_PROMPT.md](./docs/KIMI_TEST_PROMPT.md)
-
-## Kimi Code
-
-An example project-local Kimi MCP config lives at [.kimi-code/mcp.json](./.kimi-code/mcp.json).
-
-```json
-{
-  "mcpServers": {
-    "scalpel": {
-      "command": "node",
-      "args": ["./dist/index.js"]
-    }
-  }
-}
-```
-
-This relies on Kimi starting the subprocess in the workspace root. Because `SCALPEL_ROOTS` is optional in Scalpel, the server will confine itself to that working directory when the variable is not set.

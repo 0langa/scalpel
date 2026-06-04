@@ -1,0 +1,1560 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Scalpel Developer Roadmap</title><style>
+:root { color-scheme: light; }
+body { font-family: "Segoe UI", Arial, sans-serif; color: #172033; background: #f7f8fa; margin: 0; line-height: 1.55; }
+main { max-width: 980px; margin: 0 auto; background: #fff; padding: 48px 56px 72px; box-shadow: 0 0 0 1px #e6e8ee; }
+h1 { font-size: 34px; line-height: 1.15; margin: 0 0 18px; color: #101827; }
+h2 { font-size: 24px; margin: 38px 0 12px; padding-top: 6px; border-top: 1px solid #e6e8ee; color: #172033; }
+h3 { font-size: 18px; margin: 26px 0 10px; color: #21304a; }
+h4 { font-size: 15px; margin: 20px 0 8px; color: #33415f; text-transform: uppercase; letter-spacing: .04em; }
+p, li { font-size: 14px; }
+ul, ol { padding-left: 24px; }
+code { font-family: "Cascadia Mono", Consolas, monospace; background: #f0f2f5; border-radius: 4px; padding: 1px 4px; font-size: .92em; }
+pre { background: #111827; color: #f7fafc; padding: 14px 16px; border-radius: 6px; overflow-x: auto; font-size: 12px; line-height: 1.45; }
+pre code { background: transparent; color: inherit; padding: 0; }
+table { border-collapse: collapse; width: 100%; margin: 16px 0 22px; font-size: 13px; }
+th, td { border: 1px solid #d9dee8; padding: 8px 10px; vertical-align: top; }
+th { background: #eef2f7; text-align: left; font-weight: 650; }
+blockquote { border-left: 4px solid #6b7cff; background: #f4f6ff; margin: 16px 0; padding: 10px 16px; color: #26324d; }
+a { color: #2753c6; }
+hr { border: 0; border-top: 1px solid #e6e8ee; margin: 30px 0; }
+@media print { body { background: #fff; } main { box-shadow: none; padding: 0; max-width: none; } h2, h3 { break-after: avoid; } pre, table { break-inside: avoid; } }
+</style></head><body><main><h1>Scalpel Developer Roadmap</h1>
+<blockquote>
+<p><strong>For agentic workers:</strong> REQUIRED SUB-SKILL: Use <code>superpowers:subagent-driven-development</code> or <code>superpowers:executing-plans</code> to implement this roadmap task-by-task. Steps use checkbox syntax for tracking.</p>
+</blockquote>
+<p><strong>Goal:</strong> Build Scalpel from the current TypeScript MCP MVP into an Apache-2.0 Rust-core local operations engine with CLI and MCP surfaces, token-gated destructive commits, persistent indexing, journaled recovery, parser-aware edits, and terabyte-scale performance.</p>
+<p><strong>Architecture:</strong> Stabilize the current TypeScript server as the contract baseline, then introduce a Rust workspace that becomes the source of truth for filesystem operations. The MCP and CLI surfaces must call the same engine contracts so agent behavior and human workflows stay consistent.</p>
+<p><strong>Tech Stack:</strong> Rust, TypeScript, Node.js, MCP SDK, SQLite WAL, optional RocksDB later, Tree-sitter, Vitest, cargo test, proptest, criterion, cross-platform CI, local reliability fixtures.</p>
+<hr>
+<h2>1. Ground Rules</h2>
+<p>This roadmap is execution guidance, not marketing copy.</p>
+<p>Use the current code as truth for what exists today:</p>
+<ul>
+<li><code>src/index.ts</code></li>
+<li><code>src/mcp/*</code></li>
+<li><code>src/tools/*</code></li>
+<li><code>src/core/*</code></li>
+<li><code>tests/*</code></li>
+<li><code>scalpel-reliability-suite/*</code></li>
+</ul>
+<p>Do not document future capabilities as shipped behavior. Every phase below has acceptance criteria.</p>
+<h2>2. Current Repository Map</h2>
+<p>Current files:</p>
+<table>
+<thead>
+<tr>
+<th>Path</th>
+<th>Current responsibility</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>src/index.ts</code></td>
+<td>Node process bootstrap and <code>stdio</code> transport</td>
+</tr>
+<tr>
+<td><code>src/mcp/server.ts</code></td>
+<td>MCP server creation</td>
+</tr>
+<tr>
+<td><code>src/mcp/register-tools.ts</code></td>
+<td>Tool schemas and SDK registration</td>
+</tr>
+<tr>
+<td><code>src/mcp/result.ts</code></td>
+<td>MCP success/failure adaptation</td>
+</tr>
+<tr>
+<td><code>src/core/config.ts</code></td>
+<td>Runtime defaults</td>
+</tr>
+<tr>
+<td><code>src/core/path-policy.ts</code></td>
+<td>Root confinement, hidden path, symlink traversal policy</td>
+</tr>
+<tr>
+<td><code>src/core/file-metadata.ts</code></td>
+<td>File stat, content snapshot, SHA-256</td>
+</tr>
+<tr>
+<td><code>src/core/mutation.ts</code></td>
+<td>Optimistic mutation precondition helper</td>
+</tr>
+<tr>
+<td><code>src/core/write-file-atomic.ts</code></td>
+<td>Temp-file plus rename write helper</td>
+</tr>
+<tr>
+<td><code>src/core/text.ts</code></td>
+<td>Exact replacement and line helpers</td>
+</tr>
+<tr>
+<td><code>src/core/diff.ts</code></td>
+<td>Unified diff helper</td>
+</tr>
+<tr>
+<td><code>src/tools/*</code></td>
+<td>One handler per current MCP tool</td>
+</tr>
+<tr>
+<td><code>tests/unit/*</code></td>
+<td>Core and tool tests</td>
+</tr>
+<tr>
+<td><code>tests/integration/stdio-server.test.ts</code></td>
+<td>Real MCP stdio test</td>
+</tr>
+<tr>
+<td><code>scalpel-reliability-suite/*</code></td>
+<td>Manual fixtures and future benchmark seed</td>
+</tr>
+</tbody></table>
+<p>Near-term target files:</p>
+<table>
+<thead>
+<tr>
+<th>Path</th>
+<th>Responsibility</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>LICENSE</code></td>
+<td>Apache-2.0 license</td>
+</tr>
+<tr>
+<td><code>scalpel.toml</code></td>
+<td>Example project config</td>
+</tr>
+<tr>
+<td><code>.scalpel/config.toml</code></td>
+<td>Local internal workspace config sample, not committed by default</td>
+</tr>
+<tr>
+<td><code>crates/scalpel-core/</code></td>
+<td>Shared domain types, errors, paths, risk, manifests</td>
+</tr>
+<tr>
+<td><code>crates/scalpel-fs/</code></td>
+<td>Filesystem primitives, streaming IO, atomic writes, safe traversal</td>
+</tr>
+<tr>
+<td><code>crates/scalpel-plan/</code></td>
+<td>Prepare/apply manifests and risk planning</td>
+</tr>
+<tr>
+<td><code>crates/scalpel-journal/</code></td>
+<td>Journal, snapshots, undo, recovery</td>
+</tr>
+<tr>
+<td><code>crates/scalpel-index/</code></td>
+<td>SQLite-backed metadata and search index</td>
+</tr>
+<tr>
+<td><code>crates/scalpel-parse/</code></td>
+<td>Tree-sitter and structured edit helpers</td>
+</tr>
+<tr>
+<td><code>crates/scalpel-policy/</code></td>
+<td>Static policy and sandboxed hooks</td>
+</tr>
+<tr>
+<td><code>crates/scalpel-secrets/</code></td>
+<td>Secret detection and redaction</td>
+</tr>
+<tr>
+<td><code>crates/scalpel-watch/</code></td>
+<td>Watcher and daemon indexing support</td>
+</tr>
+<tr>
+<td><code>crates/scalpel-cli/</code></td>
+<td>Human CLI</td>
+</tr>
+<tr>
+<td><code>packages/scalpel-mcp/</code></td>
+<td>MCP package wrapping Rust engine</td>
+</tr>
+<tr>
+<td><code>packages/scalpel-npm/</code></td>
+<td>npm binary distribution wrapper</td>
+</tr>
+<tr>
+<td><code>docs/adr/</code></td>
+<td>Architecture decision records</td>
+</tr>
+<tr>
+<td><code>docs/superpowers/plans/</code></td>
+<td>Implementation plans for specific phases</td>
+</tr>
+</tbody></table>
+<h3>Core Module Boundaries And Ownership</h3>
+<p>Ownership here means responsibility boundary, not a person.</p>
+<table>
+<thead>
+<tr>
+<th>Module</th>
+<th>Owns</th>
+<th>Must not own</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>scalpel-core</code></td>
+<td>Shared types, errors, risk, manifests, root descriptors</td>
+<td>Filesystem side effects</td>
+</tr>
+<tr>
+<td><code>scalpel-fs</code></td>
+<td>Path resolution, traversal, metadata, streaming IO, atomic writes</td>
+<td>Policy decisions unrelated to filesystem safety</td>
+</tr>
+<tr>
+<td><code>scalpel-plan</code></td>
+<td>Prepare/apply graph, preconditions, validation orchestration, risk assembly</td>
+<td>Raw file mutation implementation</td>
+</tr>
+<tr>
+<td><code>scalpel-journal</code></td>
+<td>Journal persistence, snapshots, undo, recovery</td>
+<td>Deciding whether an operation is allowed</td>
+</tr>
+<tr>
+<td><code>scalpel-index</code></td>
+<td>Index schema, ingest, query, stale state, migrations</td>
+<td>Destructive authority</td>
+</tr>
+<tr>
+<td><code>scalpel-parse</code></td>
+<td>Parser registry, syntax trees, structured edit spans</td>
+<td>Global formatting unless explicitly requested</td>
+</tr>
+<tr>
+<td><code>scalpel-policy</code></td>
+<td>Static policy, hooks, risk thresholds, allow/deny decisions</td>
+<td>Direct filesystem mutation</td>
+</tr>
+<tr>
+<td><code>scalpel-secrets</code></td>
+<td>Detection, spans, redaction, raw-content gates</td>
+<td>Operation planning</td>
+</tr>
+<tr>
+<td><code>scalpel-watch</code></td>
+<td>Daemon, watcher events, incremental refresh</td>
+<td>Applying destructive operations from events</td>
+</tr>
+<tr>
+<td><code>scalpel-cli</code></td>
+<td>Human command surface, output rendering, exit codes</td>
+<td>Alternate business logic</td>
+</tr>
+<tr>
+<td>MCP package</td>
+<td>MCP schemas, transport, adapter mapping</td>
+<td>Alternate business logic</td>
+</tr>
+</tbody></table>
+<p>The CLI and MCP layers call the same Rust engine contracts. If behavior differs, the engine contract is wrong or one surface has a bug.</p>
+<h3>What Not To Build Yet</h3>
+<p>These are intentionally delayed:</p>
+<ul>
+<li>cloud-hosted Scalpel</li>
+<li>embeddings before Tier 0 to Tier 3 indexing is stable</li>
+<li>daemon before index correctness is stable</li>
+<li>N-API/native Node binding before subprocess JSON protocol proves contracts</li>
+<li>organization policy sync before local policy is deterministic</li>
+<li>GUI before CLI recovery workflows are reliable</li>
+<li>formatter-backed parser edits as default behavior</li>
+<li>cross-root destructive operations before workspace-root safety is mature</li>
+<li>RocksDB before SQLite WAL benchmarks prove a need</li>
+</ul>
+<p>Delay is not rejection. It keeps the foundation from becoming fog.</p>
+<h2>3. Version Gates</h2>
+<table>
+<thead>
+<tr>
+<th>Version</th>
+<th>Gate</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>v0.2</td>
+<td>Current TypeScript MCP contract is internally consistent and documented</td>
+</tr>
+<tr>
+<td>v0.3</td>
+<td>Rust workspace exists with domain model, CLI shell, and test harness</td>
+</tr>
+<tr>
+<td>v0.4</td>
+<td>Plan/apply, journal, snapshots, and undo work for narrow file ops</td>
+</tr>
+<tr>
+<td>v0.5</td>
+<td>CLI is usable as human control plane</td>
+</tr>
+<tr>
+<td>v0.6</td>
+<td>Rust native core reaches parity for current file tools</td>
+</tr>
+<tr>
+<td>v0.7</td>
+<td>Persistent workspace index tier 0 to tier 2 works</td>
+</tr>
+<tr>
+<td>v0.8</td>
+<td>Parser-aware edits work for first language/config set</td>
+</tr>
+<tr>
+<td>v0.9</td>
+<td>Volume mode, bulk planning, archive safety, and streaming large-file ops work</td>
+</tr>
+<tr>
+<td>v1.0</td>
+<td>Stable safety, recovery, packaging, docs, benchmarks, and cross-platform matrix</td>
+</tr>
+</tbody></table>
+<h2>4. Non-Negotiable Invariants</h2>
+<ul>
+<li>All public mutations resolve an explicit root scope.</li>
+<li>Destructive and large operations require prepare/apply.</li>
+<li>Apply refuses any manifest hash mismatch.</li>
+<li>Supported mutations write a journal entry before touching disk.</li>
+<li>Supported mutations are undoable until retention limits.</li>
+<li>Irreversible operations are marked before apply.</li>
+<li>No success result is emitted after partial failure.</li>
+<li>Stale index data is never authoritative for destructive apply.</li>
+<li>Secret redaction applies to logs, journals, previews, indexes, and MCP by default.</li>
+<li>Parser-backed edits preserve formatting unless formatting is explicitly enabled.</li>
+<li>Archive extraction cannot write outside planned destination.</li>
+<li>Symlinks, junctions, hardlinks, reparse points, and mount boundaries have explicit policy.</li>
+</ul>
+<h2>5. Data Models</h2>
+<h3>Engine Error</h3>
+<pre><code class="language-rust">pub enum ScalpelErrorCode {
+    FileNotFound,
+    FileExists,
+    PathOutsideRoot,
+    SymlinkNotAllowed,
+    HiddenPathNotAllowed,
+    PermissionDenied,
+    InvalidLineRange,
+    InvalidPattern,
+    StringNotFound,
+    StringNotUnique,
+    MarkerNotFound,
+    MarkerNotAllowedInReplacement,
+    ConcurrencyConflict,
+    AtomicFailure,
+    PlanMismatch,
+    JournalUnavailable,
+    IrreversibleOperation,
+    PolicyDenied,
+    ValidationFailed,
+}
+
+pub struct ScalpelError {
+    pub code: ScalpelErrorCode,
+    pub message: String,
+    pub path: Option&lt;PathBuf&gt;,
+    pub details: serde_json::Value,
+}
+</code></pre>
+<h3>Operation Plan Manifest</h3>
+<pre><code class="language-rust">pub struct PlanManifest {
+    pub schema_version: u32,
+    pub plan_id: String,
+    pub created_at: String,
+    pub root: RootDescriptor,
+    pub operation: OperationKind,
+    pub risk: RiskAssessment,
+    pub steps: Vec&lt;PlanStep&gt;,
+    pub preconditions: Vec&lt;Precondition&gt;,
+    pub validations: Vec&lt;ValidationPlan&gt;,
+    pub rollback: RollbackPlan,
+    pub hash_manifest: HashManifest,
+    pub plan_hash: String,
+    pub commit_token_hash: String,
+}
+</code></pre>
+<h3>Risk Assessment</h3>
+<pre><code class="language-rust">pub enum RiskTier {
+    Low,
+    Medium,
+    High,
+    Critical,
+}
+
+pub struct RiskAssessment {
+    pub tier: RiskTier,
+    pub score: u8,
+    pub reasons: Vec&lt;String&gt;,
+    pub mitigations: Vec&lt;String&gt;,
+    pub irreversible: bool,
+}
+</code></pre>
+<h3>Journal Entry</h3>
+<pre><code class="language-rust">pub struct JournalEntry {
+    pub schema_version: u32,
+    pub journal_id: String,
+    pub plan_id: Option&lt;String&gt;,
+    pub operation: OperationKind,
+    pub state: JournalState,
+    pub started_at: String,
+    pub finished_at: Option&lt;String&gt;,
+    pub root: RootDescriptor,
+    pub touched_paths: Vec&lt;PathImpact&gt;,
+    pub snapshots: Vec&lt;SnapshotRef&gt;,
+    pub before_hashes: Vec&lt;FileHash&gt;,
+    pub after_hashes: Vec&lt;FileHash&gt;,
+    pub errors: Vec&lt;ScalpelError&gt;,
+}
+</code></pre>
+<h3>Index Records</h3>
+<pre><code class="language-rust">pub struct FileRecord {
+    pub file_id: String,
+    pub root_id: String,
+    pub relative_path: String,
+    pub file_type: FileType,
+    pub size_bytes: u64,
+    pub mtime_ns: i128,
+    pub ctime_ns: Option&lt;i128&gt;,
+    pub device: Option&lt;u64&gt;,
+    pub inode: Option&lt;u64&gt;,
+    pub content_hash: Option&lt;String&gt;,
+    pub language: Option&lt;String&gt;,
+    pub indexed_tier: u8,
+    pub stale: bool,
+}
+</code></pre>
+<h3>Storage Formats</h3>
+<h4>Plan Files</h4>
+<p>Location: <code>.scalpel/plans/&lt;plan_id&gt;.json</code>.</p>
+<p>Properties:</p>
+<ul>
+<li>JSON</li>
+<li>schema-versioned</li>
+<li>hash-bound</li>
+<li>stable enough for human inspection and CI artifacts</li>
+<li>never stores raw secrets unless raw-content opt-in is active and recorded</li>
+</ul>
+<p>Human companion: <code>.scalpel/plans/&lt;plan_id&gt;.human.md</code>.</p>
+<h4>Journal Files</h4>
+<p>Location: <code>.scalpel/journal/&lt;yyyy&gt;/&lt;mm&gt;/&lt;journal_id&gt;.jsonl</code>.</p>
+<p>Properties:</p>
+<ul>
+<li>append-oriented records</li>
+<li>schema-versioned</li>
+<li>flushed before mutation begins</li>
+<li>recoverable after interruption</li>
+<li>redacted by default</li>
+</ul>
+<h4>Snapshots</h4>
+<p>Location: <code>.scalpel/snapshots/&lt;journal_id&gt;/</code>.</p>
+<p>Properties:</p>
+<ul>
+<li>content-addressed where practical</li>
+<li>manifest records original path, file identity, metadata, and content hash</li>
+<li>retention controlled per workspace root</li>
+</ul>
+<h4>Index</h4>
+<p>Location: <code>.scalpel/index/</code>.</p>
+<p>Default database: SQLite WAL.</p>
+<p>Properties:</p>
+<ul>
+<li>migrations under engine control</li>
+<li>stale state stored explicitly</li>
+<li>read queries can continue during writes</li>
+<li>destructive apply must revalidate against live filesystem</li>
+</ul>
+<h4>Locks</h4>
+<p>Location: <code>.scalpel/locks/</code>.</p>
+<p>Properties:</p>
+<ul>
+<li>one operation lock per root for destructive apply</li>
+<li>index writer lock separate from read/query access</li>
+<li>stale locks must be recoverable through <code>scalpel doctor</code> or <code>scalpel journal recover</code></li>
+</ul>
+<h2>6. Phase 0: Repository Hygiene And Baseline Truth</h2>
+<p>Purpose: make the existing repo a reliable base before major architecture work.</p>
+<p><strong>Files:</strong></p>
+<ul>
+<li>Modify: <code>README.md</code></li>
+<li>Modify: <code>SPEC.md</code></li>
+<li>Modify: <code>docs/*</code></li>
+<li>Modify: <code>eslint.config.mjs</code></li>
+<li>Create: <code>LICENSE</code></li>
+<li>Create: <code>docs/adr/0001-rust-core.md</code></li>
+<li>Create: <code>docs/adr/0002-plan-apply.md</code></li>
+</ul>
+<p><strong>Steps:</strong></p>
+<ul>
+<li><input disabled="" type="checkbox"> Add Apache-2.0 <code>LICENSE</code>.</li>
+<li><input disabled="" type="checkbox"> Add ADR for Rust core as mandatory architecture.</li>
+<li><input disabled="" type="checkbox"> Add ADR for prepare/apply manifests.</li>
+<li><input disabled="" type="checkbox"> Fix <code>pnpm lint</code> by excluding fixture TS files or adding a dedicated fixture tsconfig.</li>
+<li><input disabled="" type="checkbox"> Keep <code>pnpm typecheck</code>, <code>pnpm test</code>, and <code>pnpm build</code> green.</li>
+<li><input disabled="" type="checkbox"> Update <code>README.md</code> so verification commands reflect reality.</li>
+<li><input disabled="" type="checkbox"> Commit docs and hygiene changes.</li>
+</ul>
+<p><strong>Acceptance criteria:</strong></p>
+<ul>
+<li><code>pnpm lint</code> exits 0.</li>
+<li><code>pnpm typecheck</code> exits 0.</li>
+<li><code>pnpm test</code> exits 0.</li>
+<li><code>pnpm build</code> exits 0.</li>
+<li>Docs distinguish current behavior from target behavior.</li>
+</ul>
+<p><strong>Risks:</strong></p>
+<ul>
+<li>Over-fixing fixtures may weaken reliability-suite value.</li>
+<li>License addition should not imply published package readiness.</li>
+</ul>
+<h2>7. Phase 1: Stabilize TypeScript MCP Contract</h2>
+<p>Purpose: make the current MCP server safe and predictable while Rust core is being built.</p>
+<p><strong>Files:</strong></p>
+<ul>
+<li>Modify: <code>src/mcp/result.ts</code></li>
+<li>Modify: <code>src/mcp/register-tools.ts</code></li>
+<li>Modify: <code>src/tools/patch.ts</code></li>
+<li>Modify: <code>src/tools/create.ts</code></li>
+<li>Modify: <code>src/tools/append.ts</code></li>
+<li>Modify: <code>src/tools/prepend.ts</code></li>
+<li>Modify: <code>src/tools/move.ts</code></li>
+<li>Modify: <code>src/core/write-file-atomic.ts</code></li>
+<li>Modify: <code>tests/integration/stdio-server.test.ts</code></li>
+<li>Modify: <code>tests/unit/tools/*</code></li>
+</ul>
+<p><strong>Steps:</strong></p>
+<ul>
+<li><input disabled="" type="checkbox"> Add failure <code>structuredContent</code> with shape <code>{ ok: false, error }</code>.</li>
+<li><input disabled="" type="checkbox"> Keep legacy text failure content for compatibility.</li>
+<li><input disabled="" type="checkbox"> Add <code>expected_mtime_ms</code> to <code>patch</code>.</li>
+<li><input disabled="" type="checkbox"> Add dry-run support to <code>create</code>, <code>append</code>, <code>prepend</code>, and <code>move</code>, or document why any command cannot preview.</li>
+<li><input disabled="" type="checkbox"> Standardize concurrency preconditions for existing-file mutations.</li>
+<li><input disabled="" type="checkbox"> Strengthen <code>writeFileAtomic()</code> naming and docs: current implementation is atomic replacement, not crash-durable persistence.</li>
+<li><input disabled="" type="checkbox"> Add tests for structured failure payloads.</li>
+<li><input disabled="" type="checkbox"> Add tests for dry-run behavior across all mutators.</li>
+<li><input disabled="" type="checkbox"> Add tests for stale SHA and stale mtime conflicts.</li>
+<li><input disabled="" type="checkbox"> Add reliability-suite checklist entries for every stabilized contract.</li>
+</ul>
+<p><strong>Acceptance criteria:</strong></p>
+<ul>
+<li>Every public tool has documented input, output, error, and safety behavior.</li>
+<li>Agents can recover from failures without parsing text.</li>
+<li>Every mutating operation has a preview or an explicit irreversible marker.</li>
+<li>Existing-file stale writes fail deterministically.</li>
+</ul>
+<p><strong>Version gate:</strong> v0.2.</p>
+<h2>8. Phase 2: Rust Workspace Skeleton</h2>
+<p>Purpose: introduce the native core without disrupting the working MCP MVP.</p>
+<p><strong>Files:</strong></p>
+<ul>
+<li>Create: <code>Cargo.toml</code></li>
+<li>Create: <code>crates/scalpel-core/Cargo.toml</code></li>
+<li>Create: <code>crates/scalpel-core/src/lib.rs</code></li>
+<li>Create: <code>crates/scalpel-core/src/error.rs</code></li>
+<li>Create: <code>crates/scalpel-core/src/path.rs</code></li>
+<li>Create: <code>crates/scalpel-core/src/risk.rs</code></li>
+<li>Create: <code>crates/scalpel-core/src/manifest.rs</code></li>
+<li>Create: <code>crates/scalpel-cli/Cargo.toml</code></li>
+<li>Create: <code>crates/scalpel-cli/src/main.rs</code></li>
+<li>Create: <code>tests/rust-golden/</code></li>
+</ul>
+<p><strong>Steps:</strong></p>
+<ul>
+<li><input disabled="" type="checkbox"> Create Cargo workspace.</li>
+<li><input disabled="" type="checkbox"> Implement shared <code>ScalpelError</code>, <code>ScalpelResult&lt;T&gt;</code>, and JSON serialization.</li>
+<li><input disabled="" type="checkbox"> Implement <code>RootDescriptor</code>.</li>
+<li><input disabled="" type="checkbox"> Implement <code>RiskTier</code> and <code>RiskAssessment</code>.</li>
+<li><input disabled="" type="checkbox"> Implement manifest structs without apply logic.</li>
+<li><input disabled="" type="checkbox"> Add CLI shell with <code>scalpel --version</code> and <code>scalpel doctor</code>.</li>
+<li><input disabled="" type="checkbox"> Add golden JSON output tests for error and risk structures.</li>
+<li><input disabled="" type="checkbox"> Add CI command docs for <code>cargo test --workspace</code>.</li>
+</ul>
+<p><strong>Acceptance criteria:</strong></p>
+<ul>
+<li><code>cargo test --workspace</code> passes.</li>
+<li><code>cargo run -p scalpel-cli -- doctor</code> prints machine-readable diagnostics with <code>--json</code>.</li>
+<li>Rust data model can serialize and deserialize plan-like structs.</li>
+</ul>
+<p><strong>Version gate:</strong> v0.3 entry.</p>
+<h2>9. Phase 3: Rust Filesystem Primitives</h2>
+<p>Purpose: create the safe low-level foundation before porting tools.</p>
+<p><strong>Files:</strong></p>
+<ul>
+<li>Create: <code>crates/scalpel-fs/Cargo.toml</code></li>
+<li>Create: <code>crates/scalpel-fs/src/lib.rs</code></li>
+<li>Create: <code>crates/scalpel-fs/src/resolve.rs</code></li>
+<li>Create: <code>crates/scalpel-fs/src/traverse.rs</code></li>
+<li>Create: <code>crates/scalpel-fs/src/metadata.rs</code></li>
+<li>Create: <code>crates/scalpel-fs/src/atomic_write.rs</code></li>
+<li>Create: <code>crates/scalpel-fs/src/stream.rs</code></li>
+<li>Create: <code>crates/scalpel-fs/src/link_policy.rs</code></li>
+<li>Test: <code>crates/scalpel-fs/tests/path_policy.rs</code></li>
+<li>Test: <code>crates/scalpel-fs/tests/atomic_write.rs</code></li>
+</ul>
+<p><strong>Steps:</strong></p>
+<ul>
+<li><input disabled="" type="checkbox"> Implement root confinement using canonical root identity.</li>
+<li><input disabled="" type="checkbox"> Implement existing-segment symlink and reparse-point checks.</li>
+<li><input disabled="" type="checkbox"> Implement hidden path policy.</li>
+<li><input disabled="" type="checkbox"> Implement safe recursive walker with permission-denied reporting.</li>
+<li><input disabled="" type="checkbox"> Implement file metadata with platform-specific IDs where available.</li>
+<li><input disabled="" type="checkbox"> Implement best-effort atomic replace.</li>
+<li><input disabled="" type="checkbox"> Add crash-durable write mode with temp file flush and parent directory flush where platform supports it.</li>
+<li><input disabled="" type="checkbox"> Implement chunked reader for huge files.</li>
+<li><input disabled="" type="checkbox"> Add property tests for path normalization and root escape attempts.</li>
+<li><input disabled="" type="checkbox"> Add Windows junction tests.</li>
+</ul>
+<p><strong>Acceptance criteria:</strong></p>
+<ul>
+<li>Path escape tests pass on Windows and Linux.</li>
+<li>Symlink and junction traversal is denied by default.</li>
+<li>Permission-denied files do not abort whole-tree scans.</li>
+<li>Huge-file reads can stream without loading full content.</li>
+</ul>
+<h2>10. Phase 4: Plan, Apply, Journal, Snapshot, Undo</h2>
+<p>Purpose: implement the safety spine before high-power operations.</p>
+<p><strong>Files:</strong></p>
+<ul>
+<li>Create: <code>crates/scalpel-plan/src/lib.rs</code></li>
+<li>Create: <code>crates/scalpel-plan/src/prepare.rs</code></li>
+<li>Create: <code>crates/scalpel-plan/src/apply.rs</code></li>
+<li>Create: <code>crates/scalpel-plan/src/token.rs</code></li>
+<li>Create: <code>crates/scalpel-journal/src/lib.rs</code></li>
+<li>Create: <code>crates/scalpel-journal/src/store.rs</code></li>
+<li>Create: <code>crates/scalpel-journal/src/snapshot.rs</code></li>
+<li>Create: <code>crates/scalpel-journal/src/undo.rs</code></li>
+<li>Create: <code>crates/scalpel-journal/src/recover.rs</code></li>
+<li>Test: <code>crates/scalpel-journal/tests/crash_recovery.rs</code></li>
+</ul>
+<p><strong>Steps:</strong></p>
+<ul>
+<li><input disabled="" type="checkbox"> Implement plan manifest writer under <code>.scalpel/plans/</code>.</li>
+<li><input disabled="" type="checkbox"> Generate local commit tokens.</li>
+<li><input disabled="" type="checkbox"> Hash-bind token to exact manifest.</li>
+<li><input disabled="" type="checkbox"> Implement journal entry creation before mutation.</li>
+<li><input disabled="" type="checkbox"> Implement snapshot storage for supported file mutations.</li>
+<li><input disabled="" type="checkbox"> Implement undo for file create, replace, append, prepend, delete, and move.</li>
+<li><input disabled="" type="checkbox"> Implement recovery scanner for interrupted journal states.</li>
+<li><input disabled="" type="checkbox"> Add crash tests that kill process between journal creation and mutation.</li>
+<li><input disabled="" type="checkbox"> Add crash tests that kill process during mutation.</li>
+<li><input disabled="" type="checkbox"> Add retention policy enforcement.</li>
+</ul>
+<p><strong>Acceptance criteria:</strong></p>
+<ul>
+<li>Supported mutation cannot run without journal write.</li>
+<li>Apply fails if manifest hash changes.</li>
+<li>Undo restores original content and metadata where supported.</li>
+<li>Recovery command reports interrupted operation state.</li>
+</ul>
+<p><strong>Version gate:</strong> v0.4.</p>
+<h2>11. Phase 5: CLI Control Plane</h2>
+<p>Purpose: make the CLI the human-facing control plane.</p>
+<p><strong>Files:</strong></p>
+<ul>
+<li>Modify: <code>crates/scalpel-cli/src/main.rs</code></li>
+<li>Create: <code>crates/scalpel-cli/src/commands/index.rs</code></li>
+<li>Create: <code>crates/scalpel-cli/src/commands/scan.rs</code></li>
+<li>Create: <code>crates/scalpel-cli/src/commands/plan.rs</code></li>
+<li>Create: <code>crates/scalpel-cli/src/commands/apply.rs</code></li>
+<li>Create: <code>crates/scalpel-cli/src/commands/undo.rs</code></li>
+<li>Create: <code>crates/scalpel-cli/src/commands/journal.rs</code></li>
+<li>Create: <code>crates/scalpel-cli/src/commands/doctor.rs</code></li>
+<li>Create: <code>crates/scalpel-cli/src/commands/mcp.rs</code></li>
+<li>Create: <code>crates/scalpel-cli/tests/golden.rs</code></li>
+</ul>
+<p><strong>Steps:</strong></p>
+<ul>
+<li><input disabled="" type="checkbox"> Add Git-style subcommands.</li>
+<li><input disabled="" type="checkbox"> Support <code>--json</code> for every command.</li>
+<li><input disabled="" type="checkbox"> Support human-readable output for every command.</li>
+<li><input disabled="" type="checkbox"> Implement <code>doctor</code> checks for config, roots, journal, index, external tools, and platform warnings.</li>
+<li><input disabled="" type="checkbox"> Implement <code>journal list</code>, <code>journal show</code>, and <code>journal recover</code>.</li>
+<li><input disabled="" type="checkbox"> Implement <code>plan</code> and <code>apply</code> for narrow file operations.</li>
+<li><input disabled="" type="checkbox"> Implement <code>undo &lt;journal_id&gt;</code>.</li>
+<li><input disabled="" type="checkbox"> Add golden tests for CLI output.</li>
+<li><input disabled="" type="checkbox"> Add shell completion generation after command surface stabilizes.</li>
+</ul>
+<p><strong>Acceptance criteria:</strong></p>
+<ul>
+<li>A human can inspect, plan, apply, undo, and recover without using MCP.</li>
+<li>Every command that emits structured data supports <code>--json</code>.</li>
+<li>CLI output never leaks secrets by default.</li>
+</ul>
+<p><strong>Version gate:</strong> v0.5.</p>
+<h2>12. Phase 6: Native Tool Parity And MCP Bridge</h2>
+<p>Purpose: move current file operations into Rust and make MCP use the same contracts.</p>
+<p><strong>Files:</strong></p>
+<ul>
+<li>Create: <code>crates/scalpel-core/src/tools.rs</code></li>
+<li>Create: <code>crates/scalpel-fs/src/read.rs</code></li>
+<li>Create: <code>crates/scalpel-fs/src/write_ops.rs</code></li>
+<li>Create: <code>crates/scalpel-fs/src/diff.rs</code></li>
+<li>Create: <code>crates/scalpel-fs/src/search.rs</code></li>
+<li>Modify: <code>packages/scalpel-mcp/</code> or current <code>src/mcp/*</code></li>
+<li>Test: <code>tests/integration/stdio-server.test.ts</code></li>
+<li>Test: <code>crates/scalpel-fs/tests/tool_parity.rs</code></li>
+</ul>
+<p><strong>Steps:</strong></p>
+<ul>
+<li><input disabled="" type="checkbox"> Port <code>stat</code>.</li>
+<li><input disabled="" type="checkbox"> Port <code>read</code>.</li>
+<li><input disabled="" type="checkbox"> Port <code>list_dir</code>.</li>
+<li><input disabled="" type="checkbox"> Port <code>grep</code>.</li>
+<li><input disabled="" type="checkbox"> Port <code>diff</code>.</li>
+<li><input disabled="" type="checkbox"> Port <code>create</code>.</li>
+<li><input disabled="" type="checkbox"> Port <code>patch</code>.</li>
+<li><input disabled="" type="checkbox"> Port <code>batch_edit</code>.</li>
+<li><input disabled="" type="checkbox"> Port <code>insert</code>.</li>
+<li><input disabled="" type="checkbox"> Port <code>delete_range</code>.</li>
+<li><input disabled="" type="checkbox"> Port <code>replace_between_markers</code>.</li>
+<li><input disabled="" type="checkbox"> Port <code>append</code>.</li>
+<li><input disabled="" type="checkbox"> Port <code>prepend</code>.</li>
+<li><input disabled="" type="checkbox"> Port <code>move</code>.</li>
+<li><input disabled="" type="checkbox"> Add parity tests using the current TypeScript test fixtures.</li>
+<li><input disabled="" type="checkbox"> Make MCP call Rust engine through a stable JSON protocol.</li>
+<li><input disabled="" type="checkbox"> Keep TypeScript implementation behind a temporary compatibility flag until parity is proven.</li>
+</ul>
+<p><strong>Acceptance criteria:</strong></p>
+<ul>
+<li>Rust and current TypeScript outputs match for supported cases.</li>
+<li>MCP tools use Rust core by default.</li>
+<li>Current 14-tool MCP integration tests pass.</li>
+<li>Rust handles larger files without full-memory reads where the operation supports streaming.</li>
+</ul>
+<p><strong>Version gate:</strong> v0.6.</p>
+<h2>13. Phase 7: Persistent Index</h2>
+<p>Purpose: build workspace intelligence without compromising destructive safety.</p>
+<p><strong>Files:</strong></p>
+<ul>
+<li>Create: <code>crates/scalpel-index/src/lib.rs</code></li>
+<li>Create: <code>crates/scalpel-index/src/sqlite.rs</code></li>
+<li>Create: <code>crates/scalpel-index/src/schema.rs</code></li>
+<li>Create: <code>crates/scalpel-index/src/indexer.rs</code></li>
+<li>Create: <code>crates/scalpel-index/src/query.rs</code></li>
+<li>Create: <code>crates/scalpel-index/src/staleness.rs</code></li>
+<li>Create: <code>crates/scalpel-index/migrations/0001_initial.sql</code></li>
+<li>Test: <code>crates/scalpel-index/tests/index_workspace.rs</code></li>
+</ul>
+<p><strong>Steps:</strong></p>
+<ul>
+<li><input disabled="" type="checkbox"> Implement SQLite WAL store.</li>
+<li><input disabled="" type="checkbox"> Add migrations table.</li>
+<li><input disabled="" type="checkbox"> Implement Tier 0 records.</li>
+<li><input disabled="" type="checkbox"> Implement Tier 1 hashes and type detection.</li>
+<li><input disabled="" type="checkbox"> Implement Tier 2 snippets and symbol seed records.</li>
+<li><input disabled="" type="checkbox"> Add stale marker logic.</li>
+<li><input disabled="" type="checkbox"> Add index rebuild and incremental refresh commands.</li>
+<li><input disabled="" type="checkbox"> Add query APIs for path, type, language, hash, size, and stale status.</li>
+<li><input disabled="" type="checkbox"> Add index corruption detection and rebuild guidance.</li>
+<li><input disabled="" type="checkbox"> Add benchmark for 1 million file metadata ingest.</li>
+</ul>
+<p><strong>Acceptance criteria:</strong></p>
+<ul>
+<li><code>scalpel index .</code> creates <code>.scalpel/index/</code>.</li>
+<li>Querying stale records marks stale state clearly.</li>
+<li>Destructive apply never trusts stale index records as authority.</li>
+<li>Indexing permission-denied paths records warnings and continues.</li>
+</ul>
+<p><strong>Version gate:</strong> v0.7.</p>
+<h2>14. Phase 8: Secrets And Redaction</h2>
+<p>Purpose: prevent the engine from leaking sensitive content.</p>
+<p><strong>Files:</strong></p>
+<ul>
+<li>Create: <code>crates/scalpel-secrets/src/lib.rs</code></li>
+<li>Create: <code>crates/scalpel-secrets/src/detect.rs</code></li>
+<li>Create: <code>crates/scalpel-secrets/src/redact.rs</code></li>
+<li>Create: <code>crates/scalpel-secrets/src/policy.rs</code></li>
+<li>Test: <code>crates/scalpel-secrets/tests/redaction.rs</code></li>
+</ul>
+<p><strong>Steps:</strong></p>
+<ul>
+<li><input disabled="" type="checkbox"> Implement pattern-based secret detectors for common keys and tokens.</li>
+<li><input disabled="" type="checkbox"> Implement entropy-based detector for suspicious high-entropy strings.</li>
+<li><input disabled="" type="checkbox"> Implement redaction spans.</li>
+<li><input disabled="" type="checkbox"> Apply redaction to logs, diffs, previews, MCP output, journal text, and index snippets.</li>
+<li><input disabled="" type="checkbox"> Add explicit raw-content opt-in.</li>
+<li><input disabled="" type="checkbox"> Add tests proving secrets do not appear in default outputs.</li>
+</ul>
+<p><strong>Acceptance criteria:</strong></p>
+<ul>
+<li>Default CLI and MCP outputs redact detected secrets.</li>
+<li>Journal and index do not store unredacted secret snippets by default.</li>
+<li>Raw content opt-in is explicit and auditable.</li>
+</ul>
+<h2>15. Phase 9: Parser-Aware Editing</h2>
+<p>Purpose: make small code and config edits semantically safer.</p>
+<p><strong>Files:</strong></p>
+<ul>
+<li>Create: <code>crates/scalpel-parse/src/lib.rs</code></li>
+<li>Create: <code>crates/scalpel-parse/src/tree_sitter.rs</code></li>
+<li>Create: <code>crates/scalpel-parse/src/languages/typescript.rs</code></li>
+<li>Create: <code>crates/scalpel-parse/src/languages/javascript.rs</code></li>
+<li>Create: <code>crates/scalpel-parse/src/languages/python.rs</code></li>
+<li>Create: <code>crates/scalpel-parse/src/languages/json.rs</code></li>
+<li>Create: <code>crates/scalpel-parse/src/languages/yaml.rs</code></li>
+<li>Create: <code>crates/scalpel-parse/src/languages/toml.rs</code></li>
+<li>Create: <code>crates/scalpel-parse/src/languages/markdown.rs</code></li>
+<li>Create: <code>crates/scalpel-parse/src/languages/hcl.rs</code></li>
+<li>Test: <code>crates/scalpel-parse/tests/*</code></li>
+</ul>
+<p><strong>Steps:</strong></p>
+<ul>
+<li><input disabled="" type="checkbox"> Add parser registry.</li>
+<li><input disabled="" type="checkbox"> Add syntax tree parse for TS/JS.</li>
+<li><input disabled="" type="checkbox"> Add syntax tree parse for Python.</li>
+<li><input disabled="" type="checkbox"> Add structured JSON/JSONC edits.</li>
+<li><input disabled="" type="checkbox"> Add YAML and Kubernetes document targeting.</li>
+<li><input disabled="" type="checkbox"> Add TOML key edits.</li>
+<li><input disabled="" type="checkbox"> Add Markdown section edits.</li>
+<li><input disabled="" type="checkbox"> Add Terraform/HCL block parsing.</li>
+<li><input disabled="" type="checkbox"> Add minimal-diff rewrite engine.</li>
+<li><input disabled="" type="checkbox"> Add explicit formatter opt-in.</li>
+<li><input disabled="" type="checkbox"> Add semantic validation hooks after edits.</li>
+</ul>
+<p><strong>Acceptance criteria:</strong></p>
+<ul>
+<li>Parser edits preserve formatting by default.</li>
+<li>Structured key edits do not rewrite whole files.</li>
+<li>Kubernetes and Terraform files can be validated when tools are available.</li>
+<li>Parser failures degrade to explicit errors, not unsafe fallback mutations.</li>
+</ul>
+<p><strong>Version gate:</strong> v0.8.</p>
+<h2>16. Phase 10: Policy Engine</h2>
+<p>Purpose: allow users and organizations to constrain power safely.</p>
+<p><strong>Files:</strong></p>
+<ul>
+<li>Create: <code>crates/scalpel-policy/src/lib.rs</code></li>
+<li>Create: <code>crates/scalpel-policy/src/static_policy.rs</code></li>
+<li>Create: <code>crates/scalpel-policy/src/hooks.rs</code></li>
+<li>Create: <code>crates/scalpel-policy/src/evaluator.rs</code></li>
+<li>Test: <code>crates/scalpel-policy/tests/policy_eval.rs</code></li>
+</ul>
+<p><strong>Steps:</strong></p>
+<ul>
+<li><input disabled="" type="checkbox"> Implement static TOML policy loading.</li>
+<li><input disabled="" type="checkbox"> Implement policy precedence.</li>
+<li><input disabled="" type="checkbox"> Implement risk threshold rules.</li>
+<li><input disabled="" type="checkbox"> Implement path allow/deny rules.</li>
+<li><input disabled="" type="checkbox"> Implement operation allow/deny rules.</li>
+<li><input disabled="" type="checkbox"> Implement sandboxed programmable hook prototype.</li>
+<li><input disabled="" type="checkbox"> Capture policy decisions in plan manifests.</li>
+<li><input disabled="" type="checkbox"> Capture policy version in journal entries.</li>
+</ul>
+<p><strong>Acceptance criteria:</strong></p>
+<ul>
+<li>Policy can deny a risky operation before plan creation.</li>
+<li>Policy can require critical confirmation for selected operations.</li>
+<li>Policy hooks cannot silently expand planned scope.</li>
+</ul>
+<h2>17. Phase 11: Infrastructure Validation</h2>
+<p>Purpose: make critical infra edits safer before apply.</p>
+<p><strong>Files:</strong></p>
+<ul>
+<li>Create: <code>crates/scalpel-plan/src/validation.rs</code></li>
+<li>Create: <code>crates/scalpel-plan/src/external_tools.rs</code></li>
+<li>Test: <code>crates/scalpel-plan/tests/validation.rs</code></li>
+</ul>
+<p><strong>Steps:</strong></p>
+<ul>
+<li><input disabled="" type="checkbox"> Detect available external tools.</li>
+<li><input disabled="" type="checkbox"> Add <code>terraform validate</code> and plan-aware checks where possible.</li>
+<li><input disabled="" type="checkbox"> Add Kubernetes schema validation and optional server-side dry run.</li>
+<li><input disabled="" type="checkbox"> Add Docker Compose validation.</li>
+<li><input disabled="" type="checkbox"> Add GitHub Actions YAML validation where feasible.</li>
+<li><input disabled="" type="checkbox"> Add package manager checks for JS/Rust/Python projects.</li>
+<li><input disabled="" type="checkbox"> Add graceful missing-tool reporting.</li>
+<li><input disabled="" type="checkbox"> Store validation results in plan manifest.</li>
+</ul>
+<p><strong>Acceptance criteria:</strong></p>
+<ul>
+<li>Missing tools do not crash planning.</li>
+<li>Available tools produce machine-readable validation results.</li>
+<li>Critical validation failures block apply unless policy explicitly allows override.</li>
+</ul>
+<h2>18. Phase 12: Volume Mode, Bulk Ops, Archives, Huge Files</h2>
+<p>Purpose: expand from codebase editor to filesystem operations engine.</p>
+<p><strong>Files:</strong></p>
+<ul>
+<li>Create: <code>crates/scalpel-fs/src/volume.rs</code></li>
+<li>Create: <code>crates/scalpel-fs/src/archive.rs</code></li>
+<li>Create: <code>crates/scalpel-plan/src/bulk.rs</code></li>
+<li>Create: <code>crates/scalpel-index/src/dedupe.rs</code></li>
+<li>Test: <code>crates/scalpel-fs/tests/archive_safety.rs</code></li>
+<li>Test: <code>crates/scalpel-plan/tests/bulk_ops.rs</code></li>
+</ul>
+<p><strong>Steps:</strong></p>
+<ul>
+<li><input disabled="" type="checkbox"> Add explicit volume mode.</li>
+<li><input disabled="" type="checkbox"> Require separate confirmation for volume root enrollment.</li>
+<li><input disabled="" type="checkbox"> Add catalog command for 5 TB class directory trees.</li>
+<li><input disabled="" type="checkbox"> Add bulk move planning.</li>
+<li><input disabled="" type="checkbox"> Add bulk delete planning.</li>
+<li><input disabled="" type="checkbox"> Add dedupe candidate planning.</li>
+<li><input disabled="" type="checkbox"> Add archive inspection without extraction.</li>
+<li><input disabled="" type="checkbox"> Add safe archive extraction plan with path escape detection.</li>
+<li><input disabled="" type="checkbox"> Add streaming patch for 10 GB text/log files.</li>
+<li><input disabled="" type="checkbox"> Add permission and symlink-loop tests.</li>
+</ul>
+<p><strong>Acceptance criteria:</strong></p>
+<ul>
+<li>Volume mode cannot be entered accidentally.</li>
+<li>Archive extraction cannot write outside destination.</li>
+<li>Bulk operations show exact path and byte impact before apply.</li>
+<li>Huge-file patch does not require loading full file into memory.</li>
+</ul>
+<p><strong>Version gate:</strong> v0.9.</p>
+<h2>19. Phase 13: Daemon And Watcher</h2>
+<p>Purpose: make persistent workspace intelligence incremental.</p>
+<p><strong>Files:</strong></p>
+<ul>
+<li>Create: <code>crates/scalpel-watch/src/lib.rs</code></li>
+<li>Create: <code>crates/scalpel-watch/src/daemon.rs</code></li>
+<li>Create: <code>crates/scalpel-watch/src/events.rs</code></li>
+<li>Create: <code>crates/scalpel-watch/src/supervisor.rs</code></li>
+<li>Modify: <code>crates/scalpel-cli/src/commands/daemon.rs</code></li>
+<li>Test: <code>crates/scalpel-watch/tests/watch_events.rs</code></li>
+</ul>
+<p><strong>Steps:</strong></p>
+<ul>
+<li><input disabled="" type="checkbox"> Implement one daemon per active indexed root.</li>
+<li><input disabled="" type="checkbox"> Add optional global supervisor.</li>
+<li><input disabled="" type="checkbox"> Add recursive watching.</li>
+<li><input disabled="" type="checkbox"> Record changes over time.</li>
+<li><input disabled="" type="checkbox"> Refresh index incrementally.</li>
+<li><input disabled="" type="checkbox"> Expose daemon status through CLI.</li>
+<li><input disabled="" type="checkbox"> Add safe trigger hooks constrained by policy.</li>
+<li><input disabled="" type="checkbox"> Add tests for rename, delete, permission changes, and burst events.</li>
+</ul>
+<p><strong>Acceptance criteria:</strong></p>
+<ul>
+<li>Daemon can start, stop, report status, and recover.</li>
+<li>Index updates after filesystem changes.</li>
+<li>Watcher failures degrade to stale index warnings.</li>
+</ul>
+<h2>20. Phase 14: Packaging And Release</h2>
+<p>Purpose: distribute the product without compromising trust.</p>
+<p><strong>Files:</strong></p>
+<ul>
+<li>Create: <code>.github/workflows/release.yml</code></li>
+<li>Create: <code>packages/scalpel-npm/package.json</code></li>
+<li>Create: <code>packages/scalpel-npm/bin/scalpel.js</code></li>
+<li>Create: <code>Dockerfile</code></li>
+<li>Create: <code>docs/RELEASE.md</code></li>
+<li>Create: <code>docs/SECURITY.md</code></li>
+</ul>
+<p><strong>Steps:</strong></p>
+<ul>
+<li><input disabled="" type="checkbox"> Build Windows, Linux, and macOS binaries.</li>
+<li><input disabled="" type="checkbox"> Generate checksums.</li>
+<li><input disabled="" type="checkbox"> Sign release artifacts.</li>
+<li><input disabled="" type="checkbox"> Publish cargo package after API review.</li>
+<li><input disabled="" type="checkbox"> Publish npm package that wraps native binary.</li>
+<li><input disabled="" type="checkbox"> Publish Docker image.</li>
+<li><input disabled="" type="checkbox"> Prepare winget manifest.</li>
+<li><input disabled="" type="checkbox"> Add release verification guide.</li>
+<li><input disabled="" type="checkbox"> Add dependency license report.</li>
+</ul>
+<p><strong>Acceptance criteria:</strong></p>
+<ul>
+<li>Users can verify artifact integrity.</li>
+<li>npm package does not reimplement core behavior.</li>
+<li>Docker image runs CLI and MCP entrypoints.</li>
+<li>Release can be reproduced from tagged source.</li>
+</ul>
+<p><strong>Version gate:</strong> v1.0 candidate.</p>
+<h2>Required Test Environments</h2>
+<h3>Local Developer Windows</h3>
+<p>Purpose:</p>
+<ul>
+<li>primary development environment</li>
+<li>NTFS behavior</li>
+<li>long paths</li>
+<li>junctions and reparse points</li>
+<li>PowerShell CLI behavior</li>
+</ul>
+<p>Required checks:</p>
+<ul>
+<li><code>pnpm typecheck</code></li>
+<li><code>pnpm test</code></li>
+<li><code>pnpm build</code></li>
+<li><code>cargo test --workspace</code></li>
+<li>path policy tests</li>
+<li>junction tests</li>
+</ul>
+<h3>Linux</h3>
+<p>Purpose:</p>
+<ul>
+<li>production CI baseline</li>
+<li>POSIX permissions</li>
+<li>symlinks</li>
+<li>container filesystem behavior</li>
+</ul>
+<p>Required checks:</p>
+<ul>
+<li>full Rust test suite</li>
+<li>CLI golden tests</li>
+<li>permission-denied traversal tests</li>
+<li>symlink-loop tests</li>
+</ul>
+<h3>WSL</h3>
+<p>Purpose:</p>
+<ul>
+<li>boundary behavior between Windows and Linux workflows</li>
+<li>path translation risks</li>
+<li>mixed toolchain usage</li>
+</ul>
+<p>Required checks:</p>
+<ul>
+<li>workspace-root resolution</li>
+<li>file identity behavior</li>
+<li>CLI output path normalization</li>
+</ul>
+<h3>Containers</h3>
+<p>Purpose:</p>
+<ul>
+<li>CI and automation use</li>
+<li>read-only mounts</li>
+<li>volume mounts</li>
+<li>permission mismatch behavior</li>
+</ul>
+<p>Required checks:</p>
+<ul>
+<li>Docker image smoke test</li>
+<li>mounted workspace index test</li>
+<li>journal directory override test</li>
+</ul>
+<h3>Large Storage Host</h3>
+<p>Purpose:</p>
+<ul>
+<li>100 GB search</li>
+<li>1 million file index</li>
+<li>5 TB catalog</li>
+<li>10 GB streaming patch</li>
+</ul>
+<p>Required checks:</p>
+<ul>
+<li>benchmark harness</li>
+<li>crash recovery tests</li>
+<li>memory ceiling monitoring</li>
+</ul>
+<h2>Coverage Targets</h2>
+<p>Coverage targets are quality bars, not vanity metrics.</p>
+<table>
+<thead>
+<tr>
+<th>Phase</th>
+<th>Target</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>v0.2</td>
+<td>Current TypeScript contracts covered by unit or integration tests</td>
+</tr>
+<tr>
+<td>v0.4</td>
+<td>Journal, plan/apply, and undo have crash-path tests for every supported operation</td>
+</tr>
+<tr>
+<td>v0.6</td>
+<td>Rust parity tests cover all current MCP tools</td>
+</tr>
+<tr>
+<td>v0.7</td>
+<td>Index migrations, stale state, and rebuild paths covered</td>
+</tr>
+<tr>
+<td>v0.8</td>
+<td>Parser fixtures cover valid, malformed, and formatting-sensitive files</td>
+</tr>
+<tr>
+<td>v0.9</td>
+<td>Volume, archive, symlink-loop, permission, and huge-file tests covered</td>
+</tr>
+<tr>
+<td>v1.0</td>
+<td>Cross-platform matrix green for release targets</td>
+</tr>
+</tbody></table>
+<p>Minimum stable-release expectation:</p>
+<ul>
+<li>high-risk logic has branch coverage through targeted tests</li>
+<li>every bug fix adds a regression fixture or test</li>
+<li>every data-loss class has at least one failure-mode test</li>
+</ul>
+<h2>21. Testing Strategy By Subsystem</h2>
+<h3>Filesystem</h3>
+<ul>
+<li>path escape tests</li>
+<li>symlink and junction tests</li>
+<li>hardlink tests</li>
+<li>permission-denied tests</li>
+<li>mount boundary tests</li>
+<li>Unicode and case-sensitivity tests</li>
+<li>long path tests on Windows</li>
+</ul>
+<h3>Plan/Apply</h3>
+<ul>
+<li>manifest hash mismatch tests</li>
+<li>stale precondition tests</li>
+<li>token mismatch tests</li>
+<li>policy-denied tests</li>
+<li>irreversible operation tests</li>
+<li>dry-run parity tests</li>
+</ul>
+<h3>Journal/Recovery</h3>
+<ul>
+<li>process-kill tests before mutation</li>
+<li>process-kill tests during mutation</li>
+<li>partial snapshot tests</li>
+<li>undo idempotence tests</li>
+<li>retention cleanup tests</li>
+</ul>
+<h3>Index</h3>
+<ul>
+<li>1 million file metadata ingest</li>
+<li>stale state detection</li>
+<li>permission-denied continuation</li>
+<li>index corruption recovery</li>
+<li>migration tests</li>
+</ul>
+<h3>Parser</h3>
+<ul>
+<li>golden minimal diff tests</li>
+<li>malformed syntax tests</li>
+<li>formatting preservation tests</li>
+<li>language-specific fixture suites</li>
+<li>fallback refusal tests</li>
+</ul>
+<h3>Secrets</h3>
+<ul>
+<li>known secret corpus</li>
+<li>false-positive control corpus</li>
+<li>redaction span tests</li>
+<li>MCP output leak tests</li>
+<li>journal/index leak tests</li>
+</ul>
+<h3>MCP</h3>
+<ul>
+<li>tool listing tests</li>
+<li>structured success tests</li>
+<li>structured failure tests</li>
+<li>cancellation behavior</li>
+<li>large output truncation or pagination behavior</li>
+</ul>
+<h3>CLI</h3>
+<ul>
+<li>golden output tests</li>
+<li>JSON schema tests</li>
+<li>exit code tests</li>
+<li>shell completion tests</li>
+<li>recovery workflow tests</li>
+</ul>
+<h2>22. Benchmark Harness</h2>
+<p>Required benchmark scenarios:</p>
+<ul>
+<li>index 1 million files</li>
+<li>search 100 GB text corpus</li>
+<li>parse and vectorize 500,000 LOC workspace</li>
+<li>patch 10 GB log through streaming</li>
+<li>catalog 5 TB directory tree</li>
+<li>recover from killed mutating operation</li>
+<li>detect symlink loops</li>
+<li>handle permission-denied paths during scan</li>
+</ul>
+<p>Benchmark rules:</p>
+<ul>
+<li>fixtures must be generated reproducibly</li>
+<li>results must record machine, OS, filesystem, CPU, RAM, disk type, and commit hash</li>
+<li>benchmark failures block version gates that depend on them</li>
+<li>benchmark output should be stored under <code>scalpel-reliability-suite/results/</code></li>
+</ul>
+<h2>Threat Model</h2>
+<p>Threats:</p>
+<ul>
+<li>malicious workspace file paths</li>
+<li>symlink, junction, reparse-point, hardlink, or mount boundary confusion</li>
+<li>archive path traversal</li>
+<li>malicious or broken policy hook</li>
+<li>stale index used as authority</li>
+<li>external validator output trusted too much</li>
+<li>race between plan and apply</li>
+<li>raw secret leakage</li>
+<li>interrupted process during mutation</li>
+<li>dependency or release artifact compromise</li>
+</ul>
+<p>Mitigations:</p>
+<ul>
+<li>root descriptors and path policy</li>
+<li>plan/apply manifests</li>
+<li>hash-bound commit tokens</li>
+<li>journal before mutation</li>
+<li>live precondition revalidation</li>
+<li>redaction by default</li>
+<li>sandboxed hooks</li>
+<li>signed releases</li>
+<li>recovery scanner</li>
+<li>cross-platform filesystem tests</li>
+</ul>
+<h2>Compatibility Policy</h2>
+<p>Before v1.0:</p>
+<ul>
+<li>CLI flags may change with changelog notes.</li>
+<li>Plan and journal schema versions may change with migrations.</li>
+<li>MCP tool names should be stable once Rust parity begins.</li>
+</ul>
+<p>After v1.0:</p>
+<ul>
+<li>plan manifests are schema-versioned</li>
+<li>journal schemas are migratable or permanently readable</li>
+<li>CLI breaking changes require major version bump</li>
+<li>MCP breaking schema changes require compatibility window</li>
+<li>index schemas require migration tests</li>
+</ul>
+<h2>Dependency Policy</h2>
+<p>Dependency rules:</p>
+<ul>
+<li>prefer Rust standard library where sufficient</li>
+<li>prefer mature crates with active maintenance</li>
+<li>record license compatibility</li>
+<li>avoid network-required runtime dependencies for core flows</li>
+<li>avoid parser dependencies that cannot be packaged cross-platform</li>
+<li>avoid native C/C++ dependencies unless they are worth the supply-chain and build complexity</li>
+<li>pin release-critical dependencies</li>
+<li>run dependency audit before releases</li>
+</ul>
+<p>SQLite is the first index store. RocksDB is a later decision, not a default.</p>
+<h2>Observability And Logging Policy</h2>
+<p>Logging must be useful without leaking.</p>
+<p>Rules:</p>
+<ul>
+<li>structured logs</li>
+<li>redaction before emission</li>
+<li>operation IDs in every log tied to mutation, plan, apply, journal, and recovery</li>
+<li>no raw file content in logs by default</li>
+<li>trace logs require explicit opt-in</li>
+<li>CLI <code>--json</code> output is separate from diagnostic logs</li>
+<li>MCP responses are bounded, structured, and redacted</li>
+</ul>
+<p>Events to record:</p>
+<ul>
+<li>plan created</li>
+<li>apply started</li>
+<li>journal entry created</li>
+<li>snapshot created</li>
+<li>precondition failed</li>
+<li>validation failed</li>
+<li>recovery required</li>
+<li>undo started</li>
+<li>undo completed</li>
+<li>index marked stale</li>
+</ul>
+<h2>Local Development Setup</h2>
+<p>Initial TypeScript setup:</p>
+<pre><code class="language-bash">pnpm install
+pnpm typecheck
+pnpm test
+pnpm build
+</code></pre>
+<p>Future Rust setup:</p>
+<pre><code class="language-bash">rustup update stable
+cargo test --workspace
+cargo fmt --check
+cargo clippy --workspace --all-targets -- -D warnings
+</code></pre>
+<p>MCP smoke:</p>
+<pre><code class="language-bash">pnpm dev
+</code></pre>
+<p>Future CLI smoke:</p>
+<pre><code class="language-bash">cargo run -p scalpel-cli -- doctor --json
+</code></pre>
+<h2>Security And Supply-Chain Checks</h2>
+<p>Release-blocking checks:</p>
+<ul>
+<li>dependency audit</li>
+<li>license inventory</li>
+<li>secret scan</li>
+<li>artifact checksums</li>
+<li>artifact signing</li>
+<li>reproducible release notes</li>
+<li>Docker image scan</li>
+<li>npm package contents audit</li>
+<li>no generated binary committed accidentally</li>
+<li>no unredacted secrets in test fixtures</li>
+</ul>
+<h2>Architecture Decision Records</h2>
+<p>Create ADRs under <code>docs/adr/</code>.</p>
+<p>Required ADRs:</p>
+<ul>
+<li>Rust core is mandatory</li>
+<li>CLI and MCP are peer surfaces</li>
+<li>workspace default plus explicit volume mode</li>
+<li>prepare/apply manifests</li>
+<li>journal-before-mutation</li>
+<li>SQLite WAL as first index store</li>
+<li>Tree-sitter parser substrate</li>
+<li>redaction by default</li>
+<li>daemon delayed until index correctness</li>
+</ul>
+<p>ADR format:</p>
+<pre><code class="language-markdown"># ADR-NNNN: Title
+
+## Status
+
+Accepted
+
+## Context
+
+Why this decision exists.
+
+## Decision
+
+What is decided.
+
+## Consequences
+
+What this enables and costs.
+</code></pre>
+<h2>23. Quality Bars</h2>
+<h3>v0.2 Bar</h3>
+<ul>
+<li>TypeScript MCP docs match implementation.</li>
+<li>All current tests pass.</li>
+<li>Lint passes.</li>
+<li>Structured MCP failures exist.</li>
+</ul>
+<h3>v0.4 Bar</h3>
+<ul>
+<li>Journal-before-mutation invariant is enforced.</li>
+<li>Narrow undo works.</li>
+<li>Crash recovery tests exist.</li>
+</ul>
+<h3>v0.7 Bar</h3>
+<ul>
+<li>Index can be rebuilt.</li>
+<li>Index marks stale records.</li>
+<li>Index never drives destructive apply without fresh validation.</li>
+</ul>
+<h3>v1.0 Bar</h3>
+<ul>
+<li>Windows and Linux are first-class.</li>
+<li>WSL and containers are tested.</li>
+<li>macOS package exists or is explicitly marked preview.</li>
+<li>Plan/apply and recovery are stable.</li>
+<li>Release artifacts are signed.</li>
+<li>Public docs and developer docs are current.</li>
+<li>Benchmarks meet published targets or document measured limits honestly.</li>
+</ul>
+<h2>24. Debugging Guide</h2>
+<p>When behavior is wrong:</p>
+<ol>
+<li>Reproduce with CLI using <code>--json</code>.</li>
+<li>Capture root, config, command, plan manifest, and journal entry.</li>
+<li>Run <code>scalpel doctor</code>.</li>
+<li>Check <code>.scalpel/journal/</code>.</li>
+<li>Check <code>.scalpel/plans/</code>.</li>
+<li>Check index stale state.</li>
+<li>Re-run with trace logging only after redaction is verified.</li>
+<li>Add a fixture to <code>scalpel-reliability-suite/</code>.</li>
+<li>Add a regression test.</li>
+</ol>
+<p>Never debug destructive apply by running a broader destructive operation.</p>
+<h2>25. Contributor Rules</h2>
+<ul>
+<li>Write tests before or with behavior changes.</li>
+<li>Keep docs synchronized with code.</li>
+<li>Do not weaken safety defaults for convenience.</li>
+<li>Do not add hidden network requirements to core flows.</li>
+<li>Do not add parser fallback that mutates when parse fails.</li>
+<li>Do not log raw secrets by default.</li>
+<li>Do not add dependencies without checking license, maintenance, and supply-chain risk.</li>
+<li>Prefer small focused crates and modules.</li>
+<li>Keep public data models versioned.</li>
+</ul>
+<h2>Code Review Expectations</h2>
+<p>Reviewers prioritize:</p>
+<ul>
+<li>data-loss risk</li>
+<li>wrong-path risk</li>
+<li>stale precondition risk</li>
+<li>secret leakage</li>
+<li>incomplete recovery</li>
+<li>missing tests</li>
+<li>misleading docs</li>
+<li>cross-platform assumptions</li>
+<li>performance cliffs for large files or trees</li>
+</ul>
+<p>Every risky mutation PR must answer:</p>
+<ul>
+<li>What exact paths can it touch?</li>
+<li>What journal entry is created before mutation?</li>
+<li>How is undo guaranteed or marked impossible?</li>
+<li>What happens if the process dies halfway?</li>
+<li>Which tests prove the failure path?</li>
+</ul>
+<h2>26. Implementation Walkthrough</h2>
+<p>This is the start-to-finish build order.</p>
+<h3>Step 0: Make Current Repo Honest</h3>
+<ul>
+<li><input disabled="" type="checkbox"> Add license and ADRs.</li>
+<li><input disabled="" type="checkbox"> Fix lint scope.</li>
+<li><input disabled="" type="checkbox"> Verify <code>pnpm lint</code>, <code>pnpm typecheck</code>, <code>pnpm test</code>, <code>pnpm build</code>.</li>
+<li><input disabled="" type="checkbox"> Commit.</li>
+</ul>
+<p>Definition of done: current TypeScript MVP is documented and verifiable.</p>
+<h3>Step 1: Make MCP Errors Machine-Readable</h3>
+<ul>
+<li><input disabled="" type="checkbox"> Update <code>src/mcp/result.ts</code>.</li>
+<li><input disabled="" type="checkbox"> Add stdio integration assertion for failure <code>structuredContent</code>.</li>
+<li><input disabled="" type="checkbox"> Update <code>SPEC.md</code> and <code>docs/TOOL_CONTRACTS.md</code>.</li>
+<li><input disabled="" type="checkbox"> Verify.</li>
+<li><input disabled="" type="checkbox"> Commit.</li>
+</ul>
+<p>Definition of done: agents never need text parsing for Scalpel error codes.</p>
+<h3>Step 2: Normalize Current Mutator Contracts</h3>
+<ul>
+<li><input disabled="" type="checkbox"> Add missing preconditions.</li>
+<li><input disabled="" type="checkbox"> Add dry-run or irreversible preview semantics.</li>
+<li><input disabled="" type="checkbox"> Add tests.</li>
+<li><input disabled="" type="checkbox"> Verify.</li>
+<li><input disabled="" type="checkbox"> Commit.</li>
+</ul>
+<p>Definition of done: every mutator has predictable preview, precondition, and error behavior.</p>
+<h3>Step 3: Add Rust Workspace</h3>
+<ul>
+<li><input disabled="" type="checkbox"> Create Cargo workspace.</li>
+<li><input disabled="" type="checkbox"> Add <code>scalpel-core</code>.</li>
+<li><input disabled="" type="checkbox"> Add <code>scalpel-cli</code>.</li>
+<li><input disabled="" type="checkbox"> Add basic JSON output.</li>
+<li><input disabled="" type="checkbox"> Verify <code>cargo test --workspace</code>.</li>
+<li><input disabled="" type="checkbox"> Commit.</li>
+</ul>
+<p>Definition of done: Rust code exists but does not replace MCP yet.</p>
+<h3>Step 4: Implement Safe Rust Filesystem Layer</h3>
+<ul>
+<li><input disabled="" type="checkbox"> Add <code>scalpel-fs</code>.</li>
+<li><input disabled="" type="checkbox"> Implement path policy.</li>
+<li><input disabled="" type="checkbox"> Implement traversal.</li>
+<li><input disabled="" type="checkbox"> Implement metadata.</li>
+<li><input disabled="" type="checkbox"> Implement atomic write modes.</li>
+<li><input disabled="" type="checkbox"> Add platform tests.</li>
+<li><input disabled="" type="checkbox"> Commit.</li>
+</ul>
+<p>Definition of done: filesystem core can be trusted before it mutates important data.</p>
+<h3>Step 5: Build Plan/Apply Spine</h3>
+<ul>
+<li><input disabled="" type="checkbox"> Add plan manifest.</li>
+<li><input disabled="" type="checkbox"> Add commit token.</li>
+<li><input disabled="" type="checkbox"> Add journal entry writer.</li>
+<li><input disabled="" type="checkbox"> Add snapshot writer.</li>
+<li><input disabled="" type="checkbox"> Add apply for one narrow operation.</li>
+<li><input disabled="" type="checkbox"> Add undo.</li>
+<li><input disabled="" type="checkbox"> Add crash tests.</li>
+<li><input disabled="" type="checkbox"> Commit.</li>
+</ul>
+<p>Definition of done: one operation proves the safety model end to end.</p>
+<h3>Step 6: Expand CLI</h3>
+<ul>
+<li><input disabled="" type="checkbox"> Add plan/apply/undo/journal/doctor commands.</li>
+<li><input disabled="" type="checkbox"> Add human output.</li>
+<li><input disabled="" type="checkbox"> Add <code>--json</code>.</li>
+<li><input disabled="" type="checkbox"> Add golden tests.</li>
+<li><input disabled="" type="checkbox"> Commit.</li>
+</ul>
+<p>Definition of done: human control plane exists.</p>
+<h3>Step 7: Port Current Tools To Rust</h3>
+<ul>
+<li><input disabled="" type="checkbox"> Port read-only tools.</li>
+<li><input disabled="" type="checkbox"> Port exact edit tools.</li>
+<li><input disabled="" type="checkbox"> Port line/marker tools.</li>
+<li><input disabled="" type="checkbox"> Port move.</li>
+<li><input disabled="" type="checkbox"> Add parity tests.</li>
+<li><input disabled="" type="checkbox"> Switch MCP to Rust engine.</li>
+<li><input disabled="" type="checkbox"> Commit.</li>
+</ul>
+<p>Definition of done: current MCP surface uses native core.</p>
+<h3>Step 8: Add Persistent Index</h3>
+<ul>
+<li><input disabled="" type="checkbox"> Add SQLite store.</li>
+<li><input disabled="" type="checkbox"> Add tier 0 to tier 2 indexing.</li>
+<li><input disabled="" type="checkbox"> Add stale markers.</li>
+<li><input disabled="" type="checkbox"> Add query commands.</li>
+<li><input disabled="" type="checkbox"> Add 1 million file benchmark.</li>
+<li><input disabled="" type="checkbox"> Commit.</li>
+</ul>
+<p>Definition of done: workspace intelligence exists and is safe around stale data.</p>
+<h3>Step 9: Add Secrets Layer</h3>
+<ul>
+<li><input disabled="" type="checkbox"> Add detection.</li>
+<li><input disabled="" type="checkbox"> Add redaction.</li>
+<li><input disabled="" type="checkbox"> Wire redaction into outputs.</li>
+<li><input disabled="" type="checkbox"> Add leak tests.</li>
+<li><input disabled="" type="checkbox"> Commit.</li>
+</ul>
+<p>Definition of done: default output does not leak detected secrets.</p>
+<h3>Step 10: Add Parser-Aware Edits</h3>
+<ul>
+<li><input disabled="" type="checkbox"> Add parser registry.</li>
+<li><input disabled="" type="checkbox"> Add first TS/JS operations.</li>
+<li><input disabled="" type="checkbox"> Add JSON/YAML/TOML structured edits.</li>
+<li><input disabled="" type="checkbox"> Add Markdown section edits.</li>
+<li><input disabled="" type="checkbox"> Add Terraform/Kubernetes validation hooks.</li>
+<li><input disabled="" type="checkbox"> Commit.</li>
+</ul>
+<p>Definition of done: semantic edits preserve formatting and refuse unsafe fallback.</p>
+<h3>Step 11: Add Volume Mode And Bulk Plans</h3>
+<ul>
+<li><input disabled="" type="checkbox"> Add explicit volume enrollment.</li>
+<li><input disabled="" type="checkbox"> Add cataloging.</li>
+<li><input disabled="" type="checkbox"> Add bulk move/delete plans.</li>
+<li><input disabled="" type="checkbox"> Add archive inspection.</li>
+<li><input disabled="" type="checkbox"> Add huge-file streaming patch.</li>
+<li><input disabled="" type="checkbox"> Commit.</li>
+</ul>
+<p>Definition of done: Scalpel can operate beyond repos without weakening defaults.</p>
+<h3>Step 12: Add Daemon And Watcher</h3>
+<ul>
+<li><input disabled="" type="checkbox"> Add one daemon per active indexed root.</li>
+<li><input disabled="" type="checkbox"> Add supervisor.</li>
+<li><input disabled="" type="checkbox"> Add watcher events.</li>
+<li><input disabled="" type="checkbox"> Add incremental index refresh.</li>
+<li><input disabled="" type="checkbox"> Commit.</li>
+</ul>
+<p>Definition of done: index can stay fresh over time.</p>
+<h3>Step 13: Package And Release</h3>
+<ul>
+<li><input disabled="" type="checkbox"> Add release workflow.</li>
+<li><input disabled="" type="checkbox"> Add artifact signing.</li>
+<li><input disabled="" type="checkbox"> Add npm wrapper.</li>
+<li><input disabled="" type="checkbox"> Add Docker image.</li>
+<li><input disabled="" type="checkbox"> Add winget preparation.</li>
+<li><input disabled="" type="checkbox"> Commit.</li>
+</ul>
+<p>Definition of done: users can install and verify Scalpel.</p>
+<h2>27. Release Checklist</h2>
+<ul>
+<li><input disabled="" type="checkbox"> License present.</li>
+<li><input disabled="" type="checkbox"> Changelog updated.</li>
+<li><input disabled="" type="checkbox"> Public handbook updated.</li>
+<li><input disabled="" type="checkbox"> Developer roadmap updated.</li>
+<li><input disabled="" type="checkbox"> Agent context updated.</li>
+<li><input disabled="" type="checkbox"> CLI help output reviewed.</li>
+<li><input disabled="" type="checkbox"> MCP schemas reviewed.</li>
+<li><input disabled="" type="checkbox"> All tests pass.</li>
+<li><input disabled="" type="checkbox"> Benchmarks recorded.</li>
+<li><input disabled="" type="checkbox"> Artifacts signed.</li>
+<li><input disabled="" type="checkbox"> Checksums published.</li>
+<li><input disabled="" type="checkbox"> Dependency licenses reviewed.</li>
+<li><input disabled="" type="checkbox"> Security notes reviewed.</li>
+</ul>
+<h2>28. Maintenance Model</h2>
+<p>After v1.0:</p>
+<ul>
+<li>keep a stable data model compatibility policy</li>
+<li>version plan manifests and journals</li>
+<li>keep migration tests for index schemas</li>
+<li>maintain Windows and Linux as first-class platforms</li>
+<li>keep docs honest after every contract change</li>
+<li>treat safety regressions as release blockers</li>
+<li>expand reliability suite with every bug fix</li>
+</ul>
+</main></body></html>

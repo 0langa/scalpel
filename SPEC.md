@@ -20,7 +20,13 @@
 
 Tool-level failures are surfaced through MCP with `isError: true`.
 
-The authoritative machine-readable payload is:
+Current implementation detail:
+
+- success results return `structuredContent`
+- failure results return text content formatted as `[ERROR_CODE] message`
+- failure results do not currently return `structuredContent`
+
+Target machine-readable payload for future failure results:
 
 ```json
 {
@@ -66,6 +72,7 @@ Common error codes:
 - Content-replacement mutations use temp-file write then rename through the shared atomic write path.
 - `batch_edit` validates every edit against one starting snapshot and writes only if all edits succeed.
 - `dry_run` never writes.
+- Current atomic writes do not call `fsync()` on the temp file or parent directory, so crash durability is not yet guaranteed.
 
 ### Concurrency
 
@@ -136,6 +143,7 @@ Current behavior:
 - enforces `maxReadBytes` before reading files
 - invalid regex patterns fail with `INVALID_PATTERN`
 - returns both `path` and `relativePath`
+- does not currently expose before/after context lines
 
 ### Mutating tools
 

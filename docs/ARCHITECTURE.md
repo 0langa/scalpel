@@ -91,19 +91,12 @@ The server returns:
 
 - typed success payloads
 - tool-level failures with `isError: true`
-- structured error payloads under:
+- failure text formatted as `[ERROR_CODE] message`
+- no failure `structuredContent` yet
 
-```json
-{
-  "ok": false,
-  "error": {
-    "code": "STRING_NOT_UNIQUE",
-    "message": "old_string matched more than once"
-  }
-}
-```
+This shape is generated centrally in `src/mcp/result.ts`.
 
-That shape is generated centrally in `src/mcp/result.ts`.
+Future work can add failure `structuredContent`, but docs must not claim it exists until tests and implementation agree.
 
 ## Text Operation Semantics
 
@@ -178,3 +171,4 @@ The current implementation is production-usable for local testing, but these are
 - strengthen or document any remaining durability limits in atomic writes
 - decide whether `patch` should also accept `expected_mtime_ms` for full symmetry
 - expand Kimi regression coverage as new edge cases are found
+- add true streaming or chunked read/search paths before attempting large-file or terabyte-scale workloads
