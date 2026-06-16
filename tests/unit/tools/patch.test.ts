@@ -115,4 +115,32 @@ describe("patchTool", () => {
       }
     });
   });
+
+  test("rejects writes when expected_mtime_ms no longer matches", async () => {
+    await withTempDir(async (root) => {
+      const filePath = join(root, "main.ts");
+      await writeFile(filePath, "export const value = 1;\n", "utf8");
+
+      const config = createConfig({ roots: [root] });
+      const before = await statTool({ path: "main.ts" }, config);
+      if (!before.ok) {
+        throw new Error("expected initial stat");
+      }
+
+      const result = await patchTool(
+        {
+          path: "main.ts",
+          old_string: "value = 1",
+          new_string: "value = 2",
+          expected_mtime_ms: before.data.mtimeMs - 1
+        },
+        config
+      );
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error.code).toBe("CONCURRENCY_CONFLICT");
+      }
+    });
+  });
 });

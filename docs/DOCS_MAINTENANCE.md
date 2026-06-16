@@ -51,6 +51,5 @@ Avoid:
 
 - "safe" without defining threat model
 - "atomic" without specifying durability level
-- "structured" for failure payloads until `structuredContent` exists
+- "structured" for failure payloads unless `structuredContent` behavior is covered by tests
 - "large-scale" unless memory and performance limits are stated
-

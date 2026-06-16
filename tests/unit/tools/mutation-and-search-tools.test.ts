@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, test } from "vitest";
@@ -11,6 +11,8 @@ import { deleteRangeTool } from "../../../src/tools/delete-range.js";
 import { grepTool } from "../../../src/tools/grep.js";
 import { insertTool } from "../../../src/tools/insert.js";
 import { moveTool } from "../../../src/tools/move.js";
+import { patchTool } from "../../../src/tools/patch.js";
+import { prependTool } from "../../../src/tools/prepend.js";
 import { replaceBetweenMarkersTool } from "../../../src/tools/replace-between-markers.js";
 import { statTool } from "../../../src/tools/stat.js";
 import { withTempDir } from "../../helpers/temp.js";
@@ -29,6 +31,69 @@ describe("mutation and search tools", () => {
 
       expect(result.ok).toBe(true);
       await expect(readFile(join(root, "nested", "file.txt"), "utf8")).resolves.toBe("hello\n");
+    });
+  });
+
+  test("create dry_run returns a diff without writing", async () => {
+    await withTempDir(async (root) => {
+      const filePath = join(root, "nested", "file.txt");
+      const config = createConfig({ roots: [root] });
+      const result = await createTool(
+        {
+          path: "nested/file.txt",
+          content: "hello\n",
+          dry_run: true
+        },
+        config
+      );
+
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.data.applied).toBe(false);
+        expect(result.data.diff).toContain("+hello");
+      }
+      await expect(readFile(filePath, "utf8")).rejects.toThrow();
+    });
+  });
+
+  test("create overwrite honors matching and stale preconditions", async () => {
+    await withTempDir(async (root) => {
+      const filePath = join(root, "file.txt");
+      await writeFile(filePath, "old\n", "utf8");
+
+      const config = createConfig({ roots: [root] });
+      const before = await statTool({ path: "file.txt" }, config);
+      if (!before.ok || before.data.sha256 === undefined) {
+        throw new Error("expected stat with hash");
+      }
+
+      const stale = await createTool(
+        {
+          path: "file.txt",
+          content: "new\n",
+          overwrite: true,
+          expected_sha256: "not-the-current-sha"
+        },
+        config
+      );
+      expect(stale.ok).toBe(false);
+      if (!stale.ok) {
+        expect(stale.error.code).toBe("CONCURRENCY_CONFLICT");
+      }
+
+      const applied = await createTool(
+        {
+          path: "file.txt",
+          content: "new\n",
+          overwrite: true,
+          expected_sha256: before.data.sha256,
+          expected_mtime_ms: before.data.mtimeMs
+        },
+        config
+      );
+
+      expect(applied.ok).toBe(true);
+      await expect(readFile(filePath, "utf8")).resolves.toBe("new\n");
     });
   });
 
@@ -202,6 +267,69 @@ describe("mutation and search tools", () => {
     });
   });
 
+  test("append and prepend dry_run do not mutate files", async () => {
+    await withTempDir(async (root) => {
+      const filePath = join(root, "log.txt");
+      await writeFile(filePath, "middle\n", "utf8");
+      const config = createConfig({ roots: [root] });
+
+      const append = await appendTool(
+        {
+          path: "log.txt",
+          content: "tail\n",
+          dry_run: true
+        },
+        config
+      );
+      const prepend = await prependTool(
+        {
+          path: "log.txt",
+          content: "head\n",
+          dry_run: true
+        },
+        config
+      );
+
+      expect(append.ok).toBe(true);
+      expect(prepend.ok).toBe(true);
+      if (append.ok && prepend.ok) {
+        expect(append.data.applied).toBe(false);
+        expect(prepend.data.applied).toBe(false);
+      }
+      await expect(readFile(filePath, "utf8")).resolves.toBe("middle\n");
+    });
+  });
+
+  test("append and prepend reject preconditions when creating missing files", async () => {
+    await withTempDir(async (root) => {
+      const config = createConfig({ roots: [root] });
+
+      const append = await appendTool(
+        {
+          path: "missing-append.txt",
+          content: "tail\n",
+          expected_sha256: "abc"
+        },
+        config
+      );
+      const prepend = await prependTool(
+        {
+          path: "missing-prepend.txt",
+          content: "head\n",
+          expected_mtime_ms: 1
+        },
+        config
+      );
+
+      expect(append.ok).toBe(false);
+      expect(prepend.ok).toBe(false);
+      if (!append.ok && !prepend.ok) {
+        expect(append.error.code).toBe("FILE_NOT_FOUND");
+        expect(prepend.error.code).toBe("FILE_NOT_FOUND");
+      }
+    });
+  });
+
   test("move renames a file into a new parent directory", async () => {
     await withTempDir(async (root) => {
       await writeFile(join(root, "old.txt"), "hello\n", "utf8");
@@ -217,6 +345,114 @@ describe("mutation and search tools", () => {
 
       expect(result.ok).toBe(true);
       await expect(readFile(join(root, "nested", "new.txt"), "utf8")).resolves.toBe("hello\n");
+    });
+  });
+
+  test("move dry_run reports plan without renaming", async () => {
+    await withTempDir(async (root) => {
+      const sourcePath = join(root, "old.txt");
+      await writeFile(sourcePath, "hello\n", "utf8");
+
+      const config = createConfig({ roots: [root] });
+      const result = await moveTool(
+        {
+          source: "old.txt",
+          destination: "nested/new.txt",
+          dry_run: true
+        },
+        config
+      );
+
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.data.applied).toBe(false);
+        expect(result.data.source_exists).toBe(true);
+        expect(result.data.destination_exists).toBe(false);
+      }
+      await expect(readFile(sourcePath, "utf8")).resolves.toBe("hello\n");
+      await expect(readFile(join(root, "nested", "new.txt"), "utf8")).rejects.toThrow();
+    });
+  });
+
+  test("move honors source and destination preconditions", async () => {
+    await withTempDir(async (root) => {
+      await writeFile(join(root, "old.txt"), "old\n", "utf8");
+      await writeFile(join(root, "new.txt"), "new\n", "utf8");
+
+      const config = createConfig({ roots: [root] });
+      const source = await statTool({ path: "old.txt" }, config);
+      const destination = await statTool({ path: "new.txt" }, config);
+      if (
+        !source.ok ||
+        source.data.sha256 === undefined ||
+        !destination.ok ||
+        destination.data.sha256 === undefined
+      ) {
+        throw new Error("expected file hashes");
+      }
+
+      const staleDestination = await moveTool(
+        {
+          source: "old.txt",
+          destination: "new.txt",
+          overwrite: true,
+          expected_source_sha256: source.data.sha256,
+          expected_destination_sha256: "not-the-current-sha"
+        },
+        config
+      );
+      expect(staleDestination.ok).toBe(false);
+      if (!staleDestination.ok) {
+        expect(staleDestination.error.code).toBe("CONCURRENCY_CONFLICT");
+      }
+
+      const moved = await moveTool(
+        {
+          source: "old.txt",
+          destination: "new.txt",
+          overwrite: true,
+          expected_source_sha256: source.data.sha256,
+          expected_source_mtime_ms: source.data.mtimeMs,
+          expected_destination_sha256: destination.data.sha256,
+          expected_destination_mtime_ms: destination.data.mtimeMs
+        },
+        config
+      );
+
+      expect(moved.ok).toBe(true);
+      await expect(readFile(join(root, "new.txt"), "utf8")).resolves.toBe("old\n");
+    });
+  });
+
+  test("directory move accepts mtime preconditions and rejects sha preconditions", async () => {
+    await withTempDir(async (root) => {
+      await mkdir(join(root, "source-dir"));
+
+      const config = createConfig({ roots: [root] });
+      const directory = await stat(join(root, "source-dir"));
+
+      const rejected = await moveTool(
+        {
+          source: "source-dir",
+          destination: "sha-dir",
+          expected_source_sha256: "abc"
+        },
+        config
+      );
+      expect(rejected.ok).toBe(false);
+      if (!rejected.ok) {
+        expect(rejected.error.code).toBe("INVALID_INPUT");
+      }
+
+      const accepted = await moveTool(
+        {
+          source: "source-dir",
+          destination: "mtime-dir",
+          expected_source_mtime_ms: directory.mtimeMs
+        },
+        config
+      );
+      expect(accepted.ok).toBe(true);
     });
   });
 
@@ -241,6 +477,81 @@ describe("mutation and search tools", () => {
       if (result.ok) {
         expect(result.data.total_matches).toBe(2);
       }
+    });
+  });
+
+  test("grep reports skipped large, binary, and non-UTF-8 files", async () => {
+    await withTempDir(async (root) => {
+      await mkdir(join(root, "src"), { recursive: true });
+      await writeFile(join(root, "src", "ok.txt"), "needle\n", "utf8");
+      await writeFile(join(root, "src", "large.txt"), "needle ".repeat(10), "utf8");
+      await writeFile(join(root, "src", "binary.dat"), Buffer.from([0, 1, 2]));
+      await writeFile(join(root, "src", "bad.txt"), Buffer.from([0xc3, 0x28]));
+
+      const config = createConfig({ roots: [root], maxReadBytes: 12, maxGrepResults: 10 });
+      const result = await grepTool({ path: "src", pattern: "needle" }, config);
+
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.data.total_matches).toBe(1);
+        expect(result.data.skipped_files.map((file) => file.reason).sort()).toEqual([
+          "binary",
+          "non_utf8",
+          "too_large"
+        ]);
+      }
+    });
+  });
+
+  test("large existing files reject full-text mutators", async () => {
+    await withTempDir(async (root) => {
+      await writeFile(join(root, "large.txt"), "0123456789\n", "utf8");
+
+      const config = createConfig({ roots: [root], maxReadBytes: 5 });
+      const result = await appendTool({ path: "large.txt", content: "more\n" }, config);
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error.code).toBe("FILE_TOO_LARGE");
+      }
+    });
+  });
+
+  test("journal records dry-run, applied, and validation failure without content", async () => {
+    await withTempDir(async (root) => {
+      const journalPath = join(root, "journal", "scalpel.jsonl");
+      await writeFile(join(root, "notes.txt"), "alpha\nalpha\n", "utf8");
+
+      const config = createConfig({
+        roots: [root],
+        journalEnabled: true,
+        journalPath
+      });
+
+      const failed = await patchTool(
+        { path: "notes.txt", old_string: "alpha", new_string: "SECRET" },
+        config
+      );
+      expect(failed.ok).toBe(false);
+
+      const preview = await appendTool(
+        { path: "notes.txt", content: "SECRET\n", dry_run: true },
+        config
+      );
+      expect(preview.ok).toBe(true);
+
+      const applied = await appendTool({ path: "notes.txt", content: "done\n" }, config);
+      expect(applied.ok).toBe(true);
+
+      const lines = (await readFile(journalPath, "utf8")).trim().split("\n");
+      expect(lines).toHaveLength(3);
+      const records = lines.map((line) => JSON.parse(line) as { tool: string; applied: boolean; error_code?: string });
+      expect(records.map((record) => record.tool)).toEqual(["patch", "append", "append"]);
+      expect(records[0]?.error_code).toBe("STRING_NOT_UNIQUE");
+      expect(records[1]?.applied).toBe(false);
+      expect(records[2]?.applied).toBe(true);
+      expect(lines.join("\n")).not.toContain("SECRET");
+      expect(lines.join("\n")).not.toContain("alpha");
     });
   });
 

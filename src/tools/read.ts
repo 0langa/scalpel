@@ -1,5 +1,5 @@
 import { type ScalpelConfig } from "../core/config.js";
-import { readFileSnapshot } from "../core/file-metadata.js";
+import { readFileSnapshot, readLineRangeSnapshot } from "../core/file-metadata.js";
 import { failure, success, type DomainResult } from "../core/errors.js";
 import { resolveWorkspacePath } from "../core/path-policy.js";
 import { splitLinesWithEndings } from "../core/text.js";
@@ -32,7 +32,17 @@ export async function readTool(
     return resolved;
   }
 
-  const snapshot = await readFileSnapshot(resolved.data);
+  const hasRange = input.start_line !== undefined || input.end_line !== undefined;
+  const snapshot = hasRange
+    ? await readLineRangeSnapshot(
+        resolved.data,
+        input.start_line ?? 1,
+        input.end_line ?? Number.MAX_SAFE_INTEGER
+      )
+    : await readFileSnapshot(resolved.data, {
+        maxBytes: config.maxReadBytes,
+        suggestedTool: "read_chunk"
+      });
   if (!snapshot.ok) {
     return snapshot;
   }
@@ -54,19 +64,19 @@ export async function readTool(
 
   const lines = splitLinesWithEndings(snapshot.data.content);
   const startLine = input.start_line ?? 1;
-  const endLine = input.end_line ?? lines.length;
+  const endLine = input.end_line ?? snapshot.data.lineCount;
 
-  if (startLine < 1 || endLine < startLine || endLine > lines.length) {
+  if (startLine < 1 || endLine < startLine || endLine > snapshot.data.lineCount) {
     return failure("INVALID_LINE_RANGE", "Requested line range is invalid", resolved.data, {
       start_line: startLine,
       end_line: endLine,
-      total_lines: lines.length
+      total_lines: snapshot.data.lineCount
     });
   }
 
   return success({
     absolutePath: snapshot.data.absolutePath,
-    content: lines.slice(startLine - 1, endLine).join(""),
+    content: hasRange ? snapshot.data.content : lines.slice(startLine - 1, endLine).join(""),
     lines: snapshot.data.lineCount,
     size_bytes: snapshot.data.sizeBytes,
     range: {

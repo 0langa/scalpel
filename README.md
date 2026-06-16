@@ -4,12 +4,14 @@ Precise, atomic file editing for code and text over MCP.
 
 ## Status
 
-Working TypeScript MCP server with a tested `stdio` transport, 14 tools, MCP tool failures via `isError: true`, optimistic concurrency for existing-file mutations, and workspace-confined path policy.
+Working TypeScript MCP server with a tested `stdio` transport, 16 canonical tools plus `scalpel_*` aliases, MCP tool failures via `isError: true` plus `structuredContent.error`, large-file and binary guards, optional operation journaling, optimistic concurrency for mutating tools, and workspace-confined path policy.
 
 ## Implemented Tools
 
+- `config`
 - `stat`
 - `read`
+- `read_chunk`
 - `list_dir`
 - `grep`
 - `create`
@@ -49,18 +51,28 @@ Verify:
 pnpm typecheck
 pnpm test
 pnpm build
+pnpm test:mcp-smoke
 ```
 
-Known current issue: `pnpm lint` is configured, but it currently scans TypeScript fixtures under `scalpel-reliability-suite/` that are outside `tsconfig.json`, so it fails until the lint scope is corrected.
+Full release validation:
+
+```bash
+pnpm validate
+```
 
 ## Runtime Behavior
 
 - Workspace access is confined to configured roots.
 - If `SCALPEL_ROOTS` is unset, Scalpel defaults to the current working directory it was started in.
+- `config` reports the live roots for the current MCP server process.
+- Existing Codex/MCP client threads may need a server reload or new thread before newly added tool schemas appear.
 - Existing symlinks in the traversed path are rejected.
 - Hidden paths are blocked when `allowHiddenPaths` is disabled.
-- Mutating tools return unified diffs for `dry_run` previews.
-- MCP failures are returned with `isError: true` and text containing the Scalpel error code. Failure `structuredContent` is not currently emitted.
+- Full-text tools reject files above `maxReadBytes` with `FILE_TOO_LARGE`; use `read_chunk` for bounded reads.
+- Binary and invalid UTF-8 files fail with explicit text-tool errors.
+- Mutating tools support `dry_run`; content tools return unified diffs and `move` returns a move plan.
+- Operation journaling is optional and records metadata only, never file content.
+- MCP failures are returned with `isError: true`, text containing the Scalpel error code, and `structuredContent.error`.
 
 ## Edit Semantics
 
@@ -68,7 +80,7 @@ Known current issue: `pnpm lint` is configured, but it currently scans TypeScrip
 - `insert` is line-oriented. If inserted content lacks a trailing newline, Scalpel normalizes it to the file's native EOL before splicing.
 - `replace_between_markers` preserves the original marker lines exactly once and rejects `new_content` that repeats either marker.
 - `read` succeeds on empty files and returns `content: ""`, `lines: 0`, and `range: { start_line: 1, end_line: 0 }`.
-- Existing-file mutations support `expected_sha256` and, for most mutators, optional `expected_mtime_ms`.
+- Mutating tools support hash and mtime preconditions where the target path exists; missing-file creation rejects supplied expectations.
 
 ## Configuration
 
@@ -83,6 +95,17 @@ Example:
 ```bash
 SCALPEL_ROOTS=/repo pnpm dev
 ```
+
+`SCALPEL_JOURNAL_ENABLED`
+
+- Optional
+- Enable with `true` or `1`
+- Default: disabled
+
+`SCALPEL_JOURNAL_PATH`
+
+- Optional JSONL journal path
+- Defaults to `.scalpel-journal.jsonl` under the first root when journaling is enabled
 
 ## Docs
 

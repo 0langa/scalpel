@@ -1,8 +1,9 @@
-import { readdir, readFile, stat } from "node:fs/promises";
+import { readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 
 import { type ScalpelConfig } from "../core/config.js";
 import { failure, success, type DomainResult } from "../core/errors.js";
+import { readFileSnapshot } from "../core/file-metadata.js";
 import { resolveWorkspacePath, toRelativeDisplayPath } from "../core/path-policy.js";
 
 type GrepInput = {
@@ -22,6 +23,11 @@ type GrepMatch = {
 type GrepResult = {
   matches: GrepMatch[];
   total_matches: number;
+  skipped_files: {
+    path: string;
+    relativePath: string;
+    reason: "too_large" | "binary" | "non_utf8" | "unreadable";
+  }[];
 };
 
 export async function grepTool(
@@ -39,6 +45,7 @@ export async function grepTool(
   }
 
   const matches: GrepMatch[] = [];
+  const skippedFiles: GrepResult["skipped_files"] = [];
   const limit = input.max_results ?? config.maxGrepResults;
   const displayRoot = config.roots[0] ?? resolved.data;
   let matcher: RegExp | null = null;
@@ -62,11 +69,25 @@ export async function grepTool(
     try {
       const info = await stat(filePath);
       if (info.size > config.maxReadBytes) {
+        skippedFiles.push({
+          path: filePath,
+          relativePath: toRelativeDisplayPath(displayRoot, filePath),
+          reason: "too_large"
+        });
         return;
       }
 
-      const content = await readFile(filePath, "utf8");
-      for (const [index, line] of content.split(/\r\n|\n/).entries()) {
+      const snapshot = await readFileSnapshot(filePath, { maxBytes: config.maxReadBytes });
+      if (!snapshot.ok) {
+        skippedFiles.push({
+          path: filePath,
+          relativePath: toRelativeDisplayPath(displayRoot, filePath),
+          reason: skipReason(snapshot.error.code)
+        });
+        return;
+      }
+
+      for (const [index, line] of snapshot.data.content.split(/\r\n|\n/).entries()) {
         const matched = matcher === null ? line.includes(input.pattern) : matcher.test(line);
         if (matched) {
           matches.push({
@@ -82,14 +103,32 @@ export async function grepTool(
         }
       }
     } catch {
-      // best-effort search: unreadable or binary-like files are skipped
+      skippedFiles.push({
+        path: filePath,
+        relativePath: toRelativeDisplayPath(displayRoot, filePath),
+        reason: "unreadable"
+      });
     }
   });
 
   return success({
     matches,
-    total_matches: matches.length
+    total_matches: matches.length,
+    skipped_files: skippedFiles
   });
+}
+
+function skipReason(code: string): GrepResult["skipped_files"][number]["reason"] {
+  if (code === "FILE_TOO_LARGE") {
+    return "too_large";
+  }
+  if (code === "BINARY_FILE_NOT_SUPPORTED") {
+    return "binary";
+  }
+  if (code === "UNSUPPORTED_ENCODING") {
+    return "non_utf8";
+  }
+  return "unreadable";
 }
 
 async function visit(

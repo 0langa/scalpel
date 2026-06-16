@@ -29,7 +29,10 @@ export async function diffTool(
     return resolved;
   }
 
-  const snapshot = await readFileSnapshot(resolved.data);
+  const snapshot = await readFileSnapshot(resolved.data, {
+    maxBytes: config.maxReadBytes,
+    suggestedTool: "read_chunk"
+  });
   if (!snapshot.ok) {
     return snapshot;
   }

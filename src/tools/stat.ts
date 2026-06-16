@@ -17,5 +17,5 @@ export async function statTool(
     return resolved;
   }
 
-  return readPathStat(resolved.data);
+  return readPathStat(resolved.data, { maxBytes: config.maxReadBytes });
 }

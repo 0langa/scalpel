@@ -11,9 +11,16 @@ pnpm lint
 pnpm typecheck
 pnpm test
 pnpm build
+pnpm test:mcp-smoke
 ```
 
-Current note: `pnpm lint` fails because ESLint scans TypeScript fixture files under `scalpel-reliability-suite/` that are outside `tsconfig.json`. `pnpm typecheck`, `pnpm test`, and `pnpm build` pass as of this docs audit.
+Or run the full gate:
+
+```bash
+pnpm validate
+```
+
+Current baseline: `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`, and `pnpm test:mcp-smoke` pass.
 
 ## Current Automated Coverage
 
@@ -26,6 +33,10 @@ Unit tests cover:
 - line and marker mutations
 - invalid regex failure
 - optimistic concurrency failures
+- large-file failures and chunked reads
+- binary and invalid UTF-8 rejection
+- grep skipped-file reasons
+- optional operation journal records
 - atomic validation behavior for `batch_edit`
 
 Integration tests cover:
@@ -34,8 +45,27 @@ Integration tests cover:
 - tool listing
 - `read` over MCP
 - `patch` over MCP
+- `read_chunk` over MCP
+- namespaced aliases over MCP
 - failure `isError: true`
-- failure `structuredContent` currently absent
+- failure `structuredContent.error`
+- `config` over MCP
+- mutating dry-run behavior over MCP
+
+## MCP Smoke Harness
+
+`pnpm test:mcp-smoke` runs `scripts/mcp-smoke.ts` against built `dist/index.js`.
+
+It verifies:
+
+- canonical tool listing
+- `scalpel_*` alias listing
+- representative calls for every canonical tool
+- structured errors
+- large-file and binary guards
+- metadata-only operation journal
+
+Reports are written to `tmp/mcp-smoke/<timestamp>/report.md` and `report.json` unless `SCALPEL_SMOKE_OUT` is set.
 
 ## Reliability Suite Role
 

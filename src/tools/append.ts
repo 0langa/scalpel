@@ -1,16 +1,20 @@
-import { appendFile, mkdir } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 
 import { type ScalpelConfig } from "../core/config.js";
-import { readSnapshotForMutation } from "../core/mutation.js";
+import { createUnifiedDiff } from "../core/diff.js";
+import { recordJournal, snapshotState, textState } from "../core/journal.js";
+import { readOptionalSnapshotForMutation, readSnapshotForMutation } from "../core/mutation.js";
 import { success, type DomainResult } from "../core/errors.js";
 import { resolveWorkspacePath } from "../core/path-policy.js";
+import { countLines } from "../core/line-endings.js";
 import { countInsertedLines } from "../core/text.js";
 import { writeFileAtomic } from "../core/write-file-atomic.js";
 
 type AppendInput = {
   path: string;
   content: string;
+  dry_run?: boolean | undefined;
   expected_sha256?: string | undefined;
   expected_mtime_ms?: number | undefined;
 };
@@ -19,6 +23,9 @@ type AppendResult = {
   absolutePath: string;
   lines_added: number;
   new_total_lines: number;
+  diff?: string;
+  applied?: boolean;
+  warnings?: string[];
 };
 
 export async function appendTool(
@@ -35,28 +42,62 @@ export async function appendTool(
     return resolved;
   }
 
-  const before = await readSnapshotForMutation({
+  const before = await readOptionalSnapshotForMutation({
     path: resolved.data,
     expected_sha256: input.expected_sha256,
-    expected_mtime_ms: input.expected_mtime_ms
+    expected_mtime_ms: input.expected_mtime_ms,
+    maxReadBytes: config.maxReadBytes
   });
-
-  await mkdir(dirname(resolved.data), { recursive: true });
-
-  if (before.ok) {
-    await writeFileAtomic(resolved.data, `${before.data.content}${input.content}`);
-  } else {
-    await appendFile(resolved.data, input.content, "utf8");
+  if (!before.ok) {
+    return before;
   }
 
-  const snapshot = await readSnapshotForMutation({ path: resolved.data });
+  const beforeContent = before.data?.content ?? "";
+  const afterContent = `${beforeContent}${input.content}`;
+  const diff = createUnifiedDiff(resolved.data, beforeContent, afterContent);
+  const result = {
+    absolutePath: resolved.data,
+    lines_added: countInsertedLines(input.content),
+    new_total_lines: countLines(afterContent),
+    diff,
+    applied: input.dry_run !== true
+  };
+
+  if (input.dry_run === true) {
+    const warnings = await recordJournal(config, {
+      tool: "append",
+      paths: [resolved.data],
+      dry_run: true,
+      applied: false,
+      before: snapshotState(before.data),
+      after: textState(afterContent)
+    });
+    return success({
+      ...result,
+      ...(warnings.length > 0 ? { warnings } : {})
+    });
+  }
+
+  await mkdir(dirname(resolved.data), { recursive: true });
+  await writeFileAtomic(resolved.data, afterContent);
+
+  const snapshot = await readSnapshotForMutation({ path: resolved.data, maxReadBytes: config.maxReadBytes });
   if (!snapshot.ok) {
     return snapshot;
   }
 
+  const warnings = await recordJournal(config, {
+    tool: "append",
+    paths: [resolved.data],
+    dry_run: false,
+    applied: true,
+    before: snapshotState(before.data),
+    after: snapshotState(snapshot.data)
+  });
+
   return success({
-    absolutePath: resolved.data,
-    lines_added: countInsertedLines(input.content),
-    new_total_lines: snapshot.data.lineCount
+    ...result,
+    new_total_lines: snapshot.data.lineCount,
+    ...(warnings.length > 0 ? { warnings } : {})
   });
 }

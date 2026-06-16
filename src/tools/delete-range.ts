@@ -1,6 +1,7 @@
 import { type ScalpelConfig } from "../core/config.js";
 import { createUnifiedDiff } from "../core/diff.js";
 import { failure, success, type DomainResult } from "../core/errors.js";
+import { recordJournal, snapshotState, textState } from "../core/journal.js";
 import { readSnapshotForMutation } from "../core/mutation.js";
 import { resolveWorkspacePath } from "../core/path-policy.js";
 import { findLineMarkerIndex, splitLinesWithEndings } from "../core/text.js";
@@ -22,6 +23,7 @@ type DeleteRangeResult = {
   deleted_lines: number;
   diff: string;
   applied: boolean;
+  warnings?: string[];
 };
 
 export async function deleteRangeTool(
@@ -48,7 +50,8 @@ export async function deleteRangeTool(
   const snapshot = await readSnapshotForMutation({
     path: resolved.data,
     expected_sha256: input.expected_sha256,
-    expected_mtime_ms: input.expected_mtime_ms
+    expected_mtime_ms: input.expected_mtime_ms,
+    maxReadBytes: config.maxReadBytes
   });
   if (!snapshot.ok) {
     return snapshot;
@@ -98,19 +101,37 @@ export async function deleteRangeTool(
   const diff = createUnifiedDiff(resolved.data, snapshot.data.content, nextContent);
 
   if (input.dry_run === true) {
+    const warnings = await recordJournal(config, {
+      tool: "delete_range",
+      paths: [resolved.data],
+      dry_run: true,
+      applied: false,
+      before: snapshotState(snapshot.data),
+      after: textState(nextContent)
+    });
     return success({
       absolutePath: resolved.data,
       deleted_lines: endIndex - startIndex + 1,
       diff,
-      applied: false
+      applied: false,
+      ...(warnings.length > 0 ? { warnings } : {})
     });
   }
 
   await writeFileAtomic(resolved.data, nextContent);
+  const warnings = await recordJournal(config, {
+    tool: "delete_range",
+    paths: [resolved.data],
+    dry_run: false,
+    applied: true,
+    before: snapshotState(snapshot.data),
+    after: textState(nextContent)
+  });
   return success({
     absolutePath: resolved.data,
     deleted_lines: endIndex - startIndex + 1,
     diff,
-    applied: true
+    applied: true,
+    ...(warnings.length > 0 ? { warnings } : {})
   });
 }

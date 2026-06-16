@@ -6,9 +6,16 @@ import { createConfig } from "./core/config.js";
 import { createScalpelServer } from "./mcp/server.js";
 
 async function main(): Promise<void> {
-  const config = createConfig({
-    roots: loadRoots()
-  });
+  const configInput = {
+    roots: loadRoots(),
+    journalEnabled: process.env.SCALPEL_JOURNAL_ENABLED === "1" || process.env.SCALPEL_JOURNAL_ENABLED === "true"
+  };
+
+  const config = createConfig(
+    process.env.SCALPEL_JOURNAL_PATH === undefined
+      ? configInput
+      : { ...configInput, journalPath: process.env.SCALPEL_JOURNAL_PATH }
+  );
 
   const server = createScalpelServer(config);
   const transport = new StdioServerTransport();

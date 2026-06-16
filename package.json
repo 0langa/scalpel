@@ -19,6 +19,8 @@
     "lint": "eslint .",
     "format": "biome format --write .",
     "test": "vitest run",
+    "test:mcp-smoke": "tsx scripts/mcp-smoke.ts",
+    "validate": "pnpm lint && pnpm typecheck && pnpm test && pnpm build && pnpm test:mcp-smoke",
     "test:watch": "vitest",
     "inspector": "npx @modelcontextprotocol/inspector"
   },

@@ -24,9 +24,9 @@ Current implementation detail:
 
 - success results return `structuredContent`
 - failure results return text content formatted as `[ERROR_CODE] message`
-- failure results do not currently return `structuredContent`
+- failure results return `structuredContent.error`
 
-Target machine-readable payload for future failure results:
+Machine-readable failure payload:
 
 ```json
 {
@@ -44,6 +44,9 @@ Common error codes:
 
 - `FILE_NOT_FOUND`
 - `FILE_EXISTS`
+- `FILE_TOO_LARGE`
+- `BINARY_FILE_NOT_SUPPORTED`
+- `UNSUPPORTED_ENCODING`
 - `PATH_OUTSIDE_ROOT`
 - `SYMLINK_NOT_ALLOWED`
 - `HIDDEN_PATH_NOT_ALLOWED`
@@ -52,6 +55,7 @@ Common error codes:
 - `MARKER_NOT_FOUND`
 - `MARKER_NOT_ALLOWED_IN_REPLACEMENT`
 - `INVALID_LINE_RANGE`
+- `INVALID_INPUT`
 - `INVALID_PATTERN`
 - `ATOMIC_FAILURE`
 - `CONCURRENCY_CONFLICT`
@@ -83,11 +87,36 @@ Existing-file mutations can require:
 
 If the current file snapshot does not match the caller's expectation, the mutation fails with `CONCURRENCY_CONFLICT`.
 
+### Large files and encodings
+
+Full-text tools reject files above `maxReadBytes` with `FILE_TOO_LARGE`. Text tools reject binary files with `BINARY_FILE_NOT_SUPPORTED` and invalid UTF-8 with `UNSUPPORTED_ENCODING`. Use `read_chunk` for bounded large-file reads.
+
+### Operation journal
+
+When enabled, mutators append metadata-only JSONL operation records. Records include timestamp, tool, paths, dry-run/applied status, error code when logged, and before/after hash/mtime/size where available. File content is never logged.
+
 ---
 
 ## Tool Surface
 
 ### Read-only tools
+
+#### `config`
+
+Returns live server configuration for the current MCP process:
+
+- `roots`
+- `allowHiddenPaths`
+- `maxReadBytes`
+- `maxDiffBytes`
+- `maxGrepResults`
+- `journalEnabled`
+- `journalPath`
+- `logLevel`
+- `cwd`
+- raw `SCALPEL_ROOTS` when present
+- raw journal env values when present
+- path delimiter
 
 #### `stat`
 
@@ -99,6 +128,7 @@ Returns metadata for a file or directory:
 - `lineCount`
 - `sha256` for files
 - `mtimeMs`
+- `textKind`
 
 #### `read`
 
@@ -107,6 +137,10 @@ Reads a whole file or an inclusive 1-based line range.
 Current behavior:
 
 - empty files succeed
+- whole-file reads enforce `maxReadBytes`
+- ranged reads use streaming line reads
+- oversized whole-file reads fail with `FILE_TOO_LARGE`
+- binary and invalid UTF-8 files fail clearly
 - empty-file contract is:
 
 ```json
@@ -121,6 +155,18 @@ Current behavior:
 ```
 
 - returns `sha256` and detected `eol`
+
+#### `read_chunk`
+
+Reads a bounded UTF-8-safe byte chunk.
+
+Current behavior:
+
+- accepts `path`, optional `offset_bytes`, optional `max_bytes`
+- caps `max_bytes` at `maxReadBytes`
+- trims split UTF-8 boundaries
+- returns byte offsets, file size, truncation flag, and content
+- rejects binary and invalid UTF-8 chunks
 
 #### `list_dir`
 
@@ -141,11 +187,14 @@ Current behavior:
 - recursive
 - best-effort on unreadable files
 - enforces `maxReadBytes` before reading files
+- reports skipped files with reasons
 - invalid regex patterns fail with `INVALID_PATTERN`
 - returns both `path` and `relativePath`
 - does not currently expose before/after context lines
 
 ### Mutating tools
+
+Full-text mutators reject oversized, binary, or invalid UTF-8 existing files before mutation.
 
 #### `create`
 
@@ -153,6 +202,9 @@ Creates a file with exact content.
 
 - creates parent directories automatically
 - fails with `FILE_EXISTS` unless `overwrite: true`
+- supports `dry_run`
+- supports `expected_sha256` and `expected_mtime_ms` when overwriting
+- rejects expectations for missing-file creation
 - writes through the shared atomic file path
 
 #### `patch`
@@ -166,6 +218,7 @@ Input highlights:
 - `occurrence?: "unique" | "first" | "all" | number`
 - `dry_run?`
 - `expected_sha256?`
+- `expected_mtime_ms?`
 
 Current behavior:
 
@@ -232,7 +285,8 @@ Appends content to a file and creates the file if needed.
 
 Current behavior:
 
-- supports `expected_sha256` and `expected_mtime_ms` for existing files
+- supports `dry_run`, `expected_sha256`, and `expected_mtime_ms`
+- rejects expectations for missing-file creation
 - existing-file appends are rewritten through the atomic write path
 - returns `lines_added` and `new_total_lines`
 
@@ -242,7 +296,8 @@ Prepends content to a file and creates the file if needed.
 
 Current behavior:
 
-- supports `expected_sha256` and `expected_mtime_ms`
+- supports `dry_run`, `expected_sha256`, and `expected_mtime_ms`
+- rejects expectations for missing-file creation
 - writes through the atomic file path
 
 #### `diff`
@@ -255,6 +310,16 @@ Moves or renames a file or directory within configured roots.
 
 - creates destination parents automatically
 - fails with `FILE_NOT_FOUND` or `FILE_EXISTS` as appropriate
+- supports `dry_run`
+- supports source preconditions with `expected_source_sha256` and `expected_source_mtime_ms`
+- supports overwrite-destination preconditions with `expected_destination_sha256` and `expected_destination_mtime_ms`
+- rejects SHA preconditions for directories with `INVALID_INPUT`
+
+---
+
+## Namespaced Aliases
+
+Every public tool is also exposed as `scalpel_<tool>`. Alias behavior is identical to the canonical tool.
 
 ---
 
@@ -278,3 +343,5 @@ All diffs use unified diff format.
 2. Prefer one shared path-policy layer for root confinement, hidden path checks, and symlink rejection.
 3. Keep the MCP SDK boundary thin; the editing core should remain reusable outside the SDK adapter.
 4. Treat success payloads and failure payloads as machine-readable first.
+5. MCP TypeScript SDK `1.29.0` currently does not cleanly accept strict success/error output-schema unions, so runtime structured errors are guaranteed while registered output schemas stay permissive.
+6. Use `pnpm validate` as the release gate; it includes the built-server MCP smoke harness.

@@ -1,9 +1,12 @@
 export type ScalpelErrorCode =
   | "ATOMIC_FAILURE"
+  | "BINARY_FILE_NOT_SUPPORTED"
   | "CONCURRENCY_CONFLICT"
   | "FILE_EXISTS"
   | "FILE_NOT_FOUND"
+  | "FILE_TOO_LARGE"
   | "HIDDEN_PATH_NOT_ALLOWED"
+  | "INVALID_INPUT"
   | "INVALID_LINE_RANGE"
   | "INVALID_PATTERN"
   | "MARKER_NOT_FOUND"
@@ -12,7 +15,8 @@ export type ScalpelErrorCode =
   | "PERMISSION_DENIED"
   | "STRING_NOT_FOUND"
   | "STRING_NOT_UNIQUE"
-  | "SYMLINK_NOT_ALLOWED";
+  | "SYMLINK_NOT_ALLOWED"
+  | "UNSUPPORTED_ENCODING";
 
 export type ScalpelError = {
   code: ScalpelErrorCode;

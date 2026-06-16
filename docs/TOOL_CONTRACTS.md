@@ -14,7 +14,7 @@ Failure:
 - returns MCP `isError: true`
 - returns text formatted as `[ERROR_CODE] message`
 - may include path and JSON details in text
-- does not currently return failure `structuredContent`
+- returns `structuredContent.error` with `code`, `message`, optional `path`, and optional `details`
 
 ## Shared Path Rules
 
@@ -28,13 +28,17 @@ All public tools resolve paths through `resolveWorkspacePath()`.
 
 ## Read-Only Tools
 
+### `config`
+
+Returns live server configuration for the current MCP process, including configured roots, raw `SCALPEL_ROOTS` when present, path delimiter, current working directory, policy limits, and journal settings.
+
 ### `stat`
 
-Returns file or directory metadata. Files include `sha256`; directories do not.
+Returns file or directory metadata. Files include `sha256` when small enough to hash through the text path; directories do not. `textKind` is `utf8`, `binary`, `non_utf8`, or `unknown`.
 
 ### `read`
 
-Reads full UTF-8 file content or an inclusive 1-based line range.
+Reads full UTF-8 file content or an inclusive 1-based line range. Full reads enforce `config.maxReadBytes`; oversized files fail with `FILE_TOO_LARGE` and suggest `read_chunk`. Ranged reads stream line content and can return bounded line slices from oversized UTF-8 files.
 
 Empty file contract:
 
@@ -46,7 +50,18 @@ Empty file contract:
 }
 ```
 
-Current limit note: `read` does not enforce `config.maxReadBytes`; it loads the full file into memory.
+Binary files fail with `BINARY_FILE_NOT_SUPPORTED`. Invalid UTF-8 fails with `UNSUPPORTED_ENCODING`.
+
+### `read_chunk`
+
+Reads a bounded UTF-8-safe byte chunk.
+
+- input: `path`, optional `offset_bytes`, optional `max_bytes`
+- `max_bytes` is capped by `config.maxReadBytes`
+- trims split UTF-8 boundaries instead of returning invalid text
+- returns `offset_bytes`, `start_offset_bytes`, `next_offset_bytes`, `size_bytes`, and `truncated`
+- returns `sha256` when the whole file is small enough to hash through the read limit
+- binary files fail with `BINARY_FILE_NOT_SUPPORTED`
 
 ### `list_dir`
 
@@ -59,8 +74,8 @@ Recursively searches files under a path.
 - literal search by default
 - regex search when `regex: true`
 - invalid regex fails with `INVALID_PATTERN`
-- files larger than `config.maxReadBytes` are skipped
-- unreadable or binary-like files are skipped best-effort
+- files larger than `config.maxReadBytes` are reported in `skipped_files` as `too_large`
+- binary, invalid UTF-8, and unreadable files are reported in `skipped_files`
 - no context-line support yet
 - no streaming or parallel traversal yet
 
@@ -68,9 +83,19 @@ Recursively searches files under a path.
 
 Computes a unified diff between current file content and `proposed_content`.
 
-Current limit note: `diff` reads the full current file and proposed content into memory.
+`diff` enforces `config.maxReadBytes` for the current file and fails clearly for binary, invalid UTF-8, or oversized files.
+
+## Namespaced Aliases
+
+Every public tool is also registered as `scalpel_<tool>`, for example `scalpel_read` and `scalpel_patch`. Aliases call the same implementation and exist only to reduce ambiguity in multi-MCP clients.
+
+## Operation Journal
+
+When `journalEnabled` is true, mutating tools append JSONL operation records. Records include timestamp, tool, paths, dry-run/applied status, error code when logged, and before/after hash/mtime/size metadata where available. Journal records never include file content. Journal write failures do not fail the mutation; successful tool results include `warnings` when journal writing fails.
 
 ## Mutating Tools
+
+All full-text mutators reject oversized, binary, or invalid UTF-8 existing files before mutation. Oversized files fail with `FILE_TOO_LARGE`; binary and non-UTF-8 files fail with explicit encoding errors.
 
 ### `create`
 
@@ -78,6 +103,9 @@ Creates a file with exact UTF-8 content.
 
 - creates parent directories
 - fails with `FILE_EXISTS` unless `overwrite: true`
+- supports `dry_run`
+- supports `expected_sha256` and `expected_mtime_ms` when overwriting an existing file
+- fails if expectations are supplied for a missing file
 - writes through `writeFileAtomic()`
 
 ### `patch`
@@ -87,8 +115,7 @@ Exact string replacement in one file.
 - default `occurrence` is `"unique"`
 - supports `"unique"`, `"first"`, `"all"`, or positive occurrence number
 - supports `dry_run`
-- supports `expected_sha256`
-- does not currently support `expected_mtime_ms`
+- supports `expected_sha256` and `expected_mtime_ms`
 
 ### `batch_edit`
 
@@ -131,7 +158,8 @@ Replaces content between two marker lines while preserving the marker lines.
 Appends content to a file.
 
 - creates missing file
-- supports `expected_sha256` and `expected_mtime_ms` only for existing files
+- supports `dry_run`, `expected_sha256`, and `expected_mtime_ms`
+- fails if expectations are supplied for a missing file
 - rewrites existing files through atomic replacement
 
 ### `prepend`
@@ -139,7 +167,8 @@ Appends content to a file.
 Prepends content to a file.
 
 - creates missing file
-- supports `expected_sha256` and `expected_mtime_ms` only for existing files
+- supports `dry_run`, `expected_sha256`, and `expected_mtime_ms`
+- fails if expectations are supplied for a missing file
 - rewrites existing files through atomic replacement
 
 ### `move`
@@ -150,5 +179,8 @@ Moves or renames a file or directory.
 - creates destination parent directories
 - fails if source is missing
 - fails if destination exists unless `overwrite: true`
+- supports `dry_run`
+- supports source preconditions with `expected_source_sha256` and `expected_source_mtime_ms`
+- supports destination overwrite preconditions with `expected_destination_sha256` and `expected_destination_mtime_ms`
+- rejects SHA preconditions for directories with `INVALID_INPUT`
 - uses Node `rename()`
-
