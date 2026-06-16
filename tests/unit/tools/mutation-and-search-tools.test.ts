@@ -797,4 +797,127 @@ describe("mutation and search tools", () => {
       }
     });
   });
+
+  test("mutations reject files changed by external interference after commit", async () => {
+    await withTempDir(async (root) => {
+      const filePath = join(root, "externally-changed-after-commit.txt");
+      const previousPath = process.env.SCALPEL_HARDENING_INTERFERE_AFTER_COMMIT_PATH;
+      const previousContent = process.env.SCALPEL_HARDENING_INTERFERE_AFTER_COMMIT_CONTENT;
+      await writeFile(filePath, "alpha\n", "utf8");
+
+      process.env.SCALPEL_HARDENING_INTERFERE_AFTER_COMMIT_PATH = filePath;
+      process.env.SCALPEL_HARDENING_INTERFERE_AFTER_COMMIT_CONTENT = "external\n";
+
+      try {
+        const config = createConfig({ roots: [root] });
+        const result = await patchTool(
+          {
+            path: "externally-changed-after-commit.txt",
+            old_string: "alpha",
+            new_string: "scalpel",
+          },
+          config,
+        );
+
+        expect(result.ok).toBe(false);
+        if (!result.ok) {
+          expect(result.error.code).toBe("CONCURRENCY_CONFLICT");
+        }
+        await expect(readFile(filePath, "utf8")).resolves.toBe("external\n");
+      } finally {
+        if (previousPath === undefined) {
+          delete process.env.SCALPEL_HARDENING_INTERFERE_AFTER_COMMIT_PATH;
+        } else {
+          process.env.SCALPEL_HARDENING_INTERFERE_AFTER_COMMIT_PATH = previousPath;
+        }
+        if (previousContent === undefined) {
+          delete process.env.SCALPEL_HARDENING_INTERFERE_AFTER_COMMIT_CONTENT;
+        } else {
+          process.env.SCALPEL_HARDENING_INTERFERE_AFTER_COMMIT_CONTENT = previousContent;
+        }
+      }
+    });
+  });
+
+  test("mutations reject symlink swaps before commit", async () => {
+    await withTempDir(async (root) => {
+      const filePath = join(root, "symlink-before.txt");
+      const targetPath = join(root, "outside-target.txt");
+      const previousPath = process.env.SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_PATH;
+      const previousMode = process.env.SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_MODE;
+      const previousTarget = process.env.SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_SYMLINK_TARGET;
+      await writeFile(filePath, "alpha\n", "utf8");
+      await writeFile(targetPath, "external\n", "utf8");
+
+      process.env.SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_PATH = filePath;
+      process.env.SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_MODE = "symlink";
+      process.env.SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_SYMLINK_TARGET = targetPath;
+
+      try {
+        const config = createConfig({ roots: [root] });
+        const result = await patchTool(
+          {
+            path: "symlink-before.txt",
+            old_string: "alpha",
+            new_string: "scalpel",
+          },
+          config,
+        );
+
+        expect(result.ok).toBe(false);
+        if (!result.ok) {
+          expect(result.error.code).toBe("CONCURRENCY_CONFLICT");
+        }
+      } finally {
+        restoreEnv("SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_PATH", previousPath);
+        restoreEnv("SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_MODE", previousMode);
+        restoreEnv("SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_SYMLINK_TARGET", previousTarget);
+      }
+    });
+  });
+
+  test("mutations reject symlink swaps after commit", async () => {
+    await withTempDir(async (root) => {
+      const filePath = join(root, "symlink-after.txt");
+      const targetPath = join(root, "outside-target-after.txt");
+      const previousPath = process.env.SCALPEL_HARDENING_INTERFERE_AFTER_COMMIT_PATH;
+      const previousMode = process.env.SCALPEL_HARDENING_INTERFERE_AFTER_COMMIT_MODE;
+      const previousTarget = process.env.SCALPEL_HARDENING_INTERFERE_AFTER_COMMIT_SYMLINK_TARGET;
+      await writeFile(filePath, "alpha\n", "utf8");
+      await writeFile(targetPath, "scalpel\n", "utf8");
+
+      process.env.SCALPEL_HARDENING_INTERFERE_AFTER_COMMIT_PATH = filePath;
+      process.env.SCALPEL_HARDENING_INTERFERE_AFTER_COMMIT_MODE = "symlink";
+      process.env.SCALPEL_HARDENING_INTERFERE_AFTER_COMMIT_SYMLINK_TARGET = targetPath;
+
+      try {
+        const config = createConfig({ roots: [root] });
+        const result = await patchTool(
+          {
+            path: "symlink-after.txt",
+            old_string: "alpha",
+            new_string: "scalpel",
+          },
+          config,
+        );
+
+        expect(result.ok).toBe(false);
+        if (!result.ok) {
+          expect(result.error.code).toBe("CONCURRENCY_CONFLICT");
+        }
+      } finally {
+        restoreEnv("SCALPEL_HARDENING_INTERFERE_AFTER_COMMIT_PATH", previousPath);
+        restoreEnv("SCALPEL_HARDENING_INTERFERE_AFTER_COMMIT_MODE", previousMode);
+        restoreEnv("SCALPEL_HARDENING_INTERFERE_AFTER_COMMIT_SYMLINK_TARGET", previousTarget);
+      }
+    });
+  });
 });
+
+function restoreEnv(name: string, value: string | undefined): void {
+  if (value === undefined) {
+    Reflect.deleteProperty(process.env, name);
+  } else {
+    process.env[name] = value;
+  }
+}

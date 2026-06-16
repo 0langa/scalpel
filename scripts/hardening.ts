@@ -870,6 +870,118 @@ async function runRaceSuite(): Promise<void> {
       );
     },
   );
+
+  await timedCheck(
+    "race: external symlink swap before commit is rejected",
+    "required",
+    async () => {
+      const relativePath = "external-symlink-before.txt";
+      const absolutePath = join(interferenceRoot, relativePath);
+      const symlinkTarget = join(reportDir, "external-targets", "before-symlink-target.txt");
+      await mkdir(join(reportDir, "external-targets"), { recursive: true });
+      await writeFile(absolutePath, "alpha\n", "utf8");
+      await writeFile(symlinkTarget, "external\n", "utf8");
+
+      await withTemporaryEnv(
+        {
+          SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_PATH: absolutePath,
+          SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_MODE: "symlink",
+          SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_SYMLINK_TARGET: symlinkTarget,
+        },
+        async () => {
+          await withScalpelClient(
+            interferenceRoot,
+            "race-external-symlink-before",
+            async (client) => {
+              const result = await client.callTool({
+                name: "patch",
+                arguments: {
+                  path: relativePath,
+                  old_string: "alpha",
+                  new_string: "scalpel",
+                },
+              });
+              assert(result.isError === true, "external symlink swap was silently overwritten");
+              assert(
+                hasErrorCode(result.structuredContent, "CONCURRENCY_CONFLICT"),
+                "external symlink swap returned wrong error",
+              );
+            },
+          );
+        },
+      );
+    },
+  );
+
+  await timedCheck("race: external modification after commit is rejected", "required", async () => {
+    const relativePath = "external-after-commit.txt";
+    const absolutePath = join(interferenceRoot, relativePath);
+    await writeFile(absolutePath, "alpha\n", "utf8");
+
+    await withTemporaryEnv(
+      {
+        SCALPEL_HARDENING_INTERFERE_AFTER_COMMIT_PATH: absolutePath,
+        SCALPEL_HARDENING_INTERFERE_AFTER_COMMIT_CONTENT: "external\n",
+      },
+      async () => {
+        await withScalpelClient(interferenceRoot, "race-external-after-commit", async (client) => {
+          const result = await client.callTool({
+            name: "patch",
+            arguments: {
+              path: relativePath,
+              old_string: "alpha",
+              new_string: "scalpel",
+            },
+          });
+          assert(
+            result.isError === true,
+            "external post-commit modification was reported as success",
+          );
+          assert(
+            hasErrorCode(result.structuredContent, "CONCURRENCY_CONFLICT"),
+            "external post-commit modification returned wrong error",
+          );
+        });
+      },
+    );
+  });
+
+  await timedCheck("race: external symlink swap after commit is rejected", "required", async () => {
+    const relativePath = "external-symlink-after.txt";
+    const absolutePath = join(interferenceRoot, relativePath);
+    const symlinkTarget = join(reportDir, "external-targets", "after-symlink-target.txt");
+    await mkdir(join(reportDir, "external-targets"), { recursive: true });
+    await writeFile(absolutePath, "alpha\n", "utf8");
+    await writeFile(symlinkTarget, "scalpel\n", "utf8");
+
+    await withTemporaryEnv(
+      {
+        SCALPEL_HARDENING_INTERFERE_AFTER_COMMIT_PATH: absolutePath,
+        SCALPEL_HARDENING_INTERFERE_AFTER_COMMIT_MODE: "symlink",
+        SCALPEL_HARDENING_INTERFERE_AFTER_COMMIT_SYMLINK_TARGET: symlinkTarget,
+      },
+      async () => {
+        await withScalpelClient(interferenceRoot, "race-external-symlink-after", async (client) => {
+          const result = await client.callTool({
+            name: "patch",
+            arguments: {
+              path: relativePath,
+              old_string: "alpha",
+              new_string: "scalpel",
+            },
+          });
+          assert(
+            result.isError === true,
+            "external post-commit symlink swap was reported as success",
+          );
+          assert(
+            hasErrorCode(result.structuredContent, "CONCURRENCY_CONFLICT"),
+            "external post-commit symlink swap returned wrong error",
+          );
+        });
+      },
+    );
+  });
 }
 
 async function runCrashSuite(): Promise<void> {

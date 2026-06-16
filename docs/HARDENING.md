@@ -74,6 +74,11 @@ so cooperative Scalpel server processes serialize commits to the same target.
 - Text-file mutators revalidate the planned target immediately before commit,
   and the MCP race lane proves externally modified, created, deleted, or
   directory-replaced targets are rejected instead of silently overwritten.
+- Text-file mutators verify committed content before reporting success, and the
+  MCP race lane proves external post-commit modification before success is
+  reported as a conflict.
+- Text-file mutators explicitly reject symlink swaps before commit and after
+  commit before success is reported.
 - Stale path locks owned by dead processes are recovered after the configured
   stale threshold.
 - A first crash-interruption probe checks for absent-or-complete output and leftover temp files.
@@ -82,8 +87,7 @@ so cooperative Scalpel server processes serialize commits to the same target.
 
 - Full transactional crash recovery.
 - Race-proof final commit under malicious same-user filesystem interference
-  after the pre-commit revalidation point, or for symlink-swap interference not
-  yet represented in the hardening lane.
+  after Scalpel reports success.
 - Recovery from a process crash while holding a path lock before the configured
   stale threshold elapses.
 - Large-file streaming mutation.
@@ -134,6 +138,10 @@ Required proof:
 - Hardening race lane over MCP for in-process and multi-process server calls.
 - Hardening race lane over MCP for non-cooperative external modification,
   creation, deletion, and replacement before commit.
+- Hardening race lane over MCP for non-cooperative external modification after
+  commit but before success is reported.
+- Hardening race lane over MCP for symlink swaps before commit and after commit
+  but before success is reported.
 - Reports show zero unexpected double-writes or silent overwrites.
 
 ### 3. Crash Safety And Recovery
@@ -213,8 +221,8 @@ Required proof:
 
 ## Current Highest-Value Gaps
 
-1. Extend external-interference probes around commit for non-cooperative
-   symlink swaps and changes after pre-commit revalidation.
+1. Define the exact guarantee boundary for changes after Scalpel reports
+   success.
 2. Add transaction/recovery architecture before claiming crash recovery.
 3. Expand corpus lanes to TypeScript, Kubernetes, LLVM, and disposable mutation
    copies.

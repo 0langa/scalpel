@@ -1,4 +1,5 @@
-import { mkdir, rm } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { lstat, mkdir, rm, symlink } from "node:fs/promises";
 
 import { failure, success, type DomainResult } from "./errors.js";
 import {
@@ -139,7 +140,7 @@ export function hasMutationPreconditions(input: MutationPreconditionInput): bool
 export async function writeTextFileForMutation(
   input: MutationWriteInput,
 ): Promise<DomainResult<{ warnings: string[] }>> {
-  await runHardeningInterference(input.path);
+  await runHardeningInterference(input.path, "BEFORE_COMMIT");
 
   const guard = await validateCommitGuard(input);
   if (!guard.ok) {
@@ -149,11 +150,23 @@ export async function writeTextFileForMutation(
   const warnings = await writeFileAtomic(input.path, input.content, {
     ...(input.durability !== undefined ? { durability: input.durability } : {}),
   });
+  await runHardeningInterference(input.path, "AFTER_COMMIT");
+
+  const verification = await verifyCommittedContent(input);
+  if (!verification.ok) {
+    return verification;
+  }
+
   return success({ warnings });
 }
 
 async function validateCommitGuard(input: MutationWriteInput): Promise<DomainResult<undefined>> {
   if (input.before === undefined) {
+    const symlinkCheck = await validatePathIsNotSymlink(input.path);
+    if (!symlinkCheck.ok) {
+      return symlinkCheck;
+    }
+
     const current = await readPathStat(input.path, { maxBytes: input.maxReadBytes });
     if (current.ok) {
       return failure(
@@ -172,6 +185,11 @@ async function validateCommitGuard(input: MutationWriteInput): Promise<DomainRes
     }
 
     return current;
+  }
+
+  const symlinkCheck = await validatePathIsNotSymlink(input.path);
+  if (!symlinkCheck.ok) {
+    return symlinkCheck;
   }
 
   const current = await readFileSnapshot(input.path, {
@@ -211,12 +229,71 @@ async function validateCommitGuard(input: MutationWriteInput): Promise<DomainRes
   return success(undefined);
 }
 
-async function runHardeningInterference(path: string): Promise<void> {
-  if (process.env.SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_PATH !== path) {
+async function verifyCommittedContent(input: MutationWriteInput): Promise<DomainResult<undefined>> {
+  const symlinkCheck = await validatePathIsNotSymlink(input.path);
+  if (!symlinkCheck.ok) {
+    return symlinkCheck;
+  }
+
+  const maxBytes = Math.max(input.maxReadBytes ?? 0, Buffer.byteLength(input.content, "utf8"));
+  const current = await readFileSnapshot(input.path, {
+    maxBytes,
+    suggestedTool: "read_chunk",
+  });
+  if (!current.ok) {
+    return failure(
+      "CONCURRENCY_CONFLICT",
+      "File changed or disappeared after Scalpel committed the mutation",
+      input.path,
+      {
+        expected_sha256: sha256(input.content),
+        cause: current.error,
+      },
+    );
+  }
+
+  const expectedSha = sha256(input.content);
+  if (current.data.sha256 !== expectedSha) {
+    return failure(
+      "CONCURRENCY_CONFLICT",
+      "File changed after Scalpel committed the mutation",
+      input.path,
+      {
+        expected_sha256: expectedSha,
+        actual_sha256: current.data.sha256,
+      },
+    );
+  }
+
+  return success(undefined);
+}
+
+async function validatePathIsNotSymlink(path: string): Promise<DomainResult<undefined>> {
+  try {
+    const stats = await lstat(path);
+    if (stats.isSymbolicLink()) {
+      return failure(
+        "CONCURRENCY_CONFLICT",
+        "Path was replaced by a symlink during mutation",
+        path,
+      );
+    }
+  } catch {
+    // Missing paths are handled by the normal commit guard.
+  }
+
+  return success(undefined);
+}
+
+async function runHardeningInterference(
+  path: string,
+  phase: "BEFORE_COMMIT" | "AFTER_COMMIT",
+): Promise<void> {
+  if (process.env[`SCALPEL_HARDENING_INTERFERE_${phase}_PATH`] !== path) {
     return;
   }
 
-  const mode = process.env.SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_MODE ?? "write";
+  const mode = process.env[`SCALPEL_HARDENING_INTERFERE_${phase}_MODE`] ?? "write";
   if (mode === "delete") {
     await rm(path, { recursive: true, force: true });
     return;
@@ -226,11 +303,24 @@ async function runHardeningInterference(path: string): Promise<void> {
     await mkdir(path, { recursive: true });
     return;
   }
+  if (mode === "symlink") {
+    const target = process.env[`SCALPEL_HARDENING_INTERFERE_${phase}_SYMLINK_TARGET`];
+    if (target === undefined) {
+      throw new Error(`SCALPEL_HARDENING_INTERFERE_${phase}_SYMLINK_TARGET is required`);
+    }
+    await rm(path, { recursive: true, force: true });
+    await symlink(target, path, "file");
+    return;
+  }
 
   await writeFileAtomic(
     path,
-    process.env.SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_CONTENT ?? "external interference\n",
+    process.env[`SCALPEL_HARDENING_INTERFERE_${phase}_CONTENT`] ?? "external interference\n",
   );
+}
+
+function sha256(content: string): string {
+  return createHash("sha256").update(content).digest("hex");
 }
 
 function expectedDetails(input: MutationPreconditionInput): Record<string, unknown> {
