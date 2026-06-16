@@ -1,16 +1,23 @@
 {
   "name": "scalpel",
   "version": "0.1.0",
-  "private": true,
   "description": "Precise, atomic file editing for code and text over MCP.",
+  "license": "Apache-2.0",
   "type": "module",
   "main": "./dist/index.js",
+  "bin": {
+    "scalpel": "./dist/index.js"
+  },
   "packageManager": "pnpm@11.5.0",
   "engines": {
     "node": ">=22"
   },
   "files": [
-    "dist"
+    "dist",
+    "docs",
+    "README.md",
+    "AGENTS.md",
+    "LICENSE"
   ],
   "scripts": {
     "dev": "tsx src/index.ts",
@@ -20,7 +27,13 @@
     "format": "biome format --write .",
     "test": "vitest run",
     "test:mcp-smoke": "tsx scripts/mcp-smoke.ts",
-    "validate": "pnpm lint && pnpm typecheck && pnpm test && pnpm build && pnpm test:mcp-smoke",
+    "test:package-smoke": "tsx scripts/package-smoke.ts",
+    "hardening:setup": "tsx scripts/hardening.ts setup",
+    "hardening:corpus": "tsx scripts/hardening.ts corpus",
+    "hardening:race": "tsx scripts/hardening.ts race",
+    "hardening:crash": "tsx scripts/hardening.ts crash",
+    "hardening:all": "tsx scripts/hardening.ts all",
+    "validate": "pnpm lint && pnpm typecheck && pnpm test && pnpm build && pnpm test:mcp-smoke && pnpm test:package-smoke",
     "test:watch": "vitest",
     "inspector": "npx @modelcontextprotocol/inspector"
   },

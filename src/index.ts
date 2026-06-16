@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 import { delimiter } from "node:path";
 
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -8,7 +9,8 @@ import { createScalpelServer } from "./mcp/server.js";
 async function main(): Promise<void> {
   const configInput = {
     roots: loadRoots(),
-    journalEnabled: process.env.SCALPEL_JOURNAL_ENABLED === "1" || process.env.SCALPEL_JOURNAL_ENABLED === "true"
+    journalEnabled: process.env.SCALPEL_JOURNAL_ENABLED === "1" || process.env.SCALPEL_JOURNAL_ENABLED === "true",
+    durability: process.env.SCALPEL_DURABILITY === "strict" ? "strict" as const : "default" as const
   };
 
   const config = createConfig(

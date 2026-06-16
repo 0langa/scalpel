@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import { type ScalpelConfig } from "../core/config.js";
+import { registerResources } from "./resources.js";
 import { registerTools } from "./register-tools.js";
 
 export function createScalpelServer(config: ScalpelConfig): McpServer {
@@ -16,5 +17,6 @@ export function createScalpelServer(config: ScalpelConfig): McpServer {
   );
 
   registerTools(server, config);
+  registerResources(server, config);
   return server;
 }

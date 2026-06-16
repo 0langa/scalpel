@@ -30,7 +30,7 @@ All public tools resolve paths through `resolveWorkspacePath()`.
 
 ### `config`
 
-Returns live server configuration for the current MCP process, including configured roots, raw `SCALPEL_ROOTS` when present, path delimiter, current working directory, policy limits, and journal settings.
+Returns live server configuration for the current MCP process, including configured roots, raw `SCALPEL_ROOTS` when present, path delimiter, current working directory, policy limits, durability mode, and journal settings.
 
 ### `stat`
 
@@ -73,10 +73,12 @@ Recursively searches files under a path.
 
 - literal search by default
 - regex search when `regex: true`
+- optional `include_globs` and `exclude_globs` filters against slash-normalized relative paths
+- optional `before_context` and `after_context` line arrays on each match
+- `has_more` is true when the result limit was reached before traversal finished
 - invalid regex fails with `INVALID_PATTERN`
 - files larger than `config.maxReadBytes` are reported in `skipped_files` as `too_large`
 - binary, invalid UTF-8, and unreadable files are reported in `skipped_files`
-- no context-line support yet
 - no streaming or parallel traversal yet
 
 ### `diff`
@@ -92,6 +94,17 @@ Every public tool is also registered as `scalpel_<tool>`, for example `scalpel_r
 ## Operation Journal
 
 When `journalEnabled` is true, mutating tools append JSONL operation records. Records include timestamp, tool, paths, dry-run/applied status, error code when logged, and before/after hash/mtime/size metadata where available. Journal records never include file content. Journal write failures do not fail the mutation; successful tool results include `warnings` when journal writing fails.
+
+## MCP Resources
+
+The server exposes read-only resources for agent context:
+
+- `scalpel://docs/safety`
+- `scalpel://docs/tool-contracts`
+- `scalpel://docs/testing`
+- `scalpel://config/current`
+
+Resources are informational only and do not mutate workspace files.
 
 ## Mutating Tools
 

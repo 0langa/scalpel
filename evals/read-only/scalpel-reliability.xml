@@ -1,0 +1,42 @@
+<evaluation>
+  <qa_pair>
+    <question>In the reliability fixture that rotates three simple words for exactly 100 lines, how many lines contain the first word in the rotation? Answer with a number only.</question>
+    <answer>34</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>The duplicate-marker fixture has several repeated generic sections and one contrasting unique section near the end. What exact text appears inside the unique section?</question>
+    <answer>this is unique</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Use the fixed-width numbered-lines fixture. What is the full content of line 042?</question>
+    <answer>042 | Line number forty-two</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>In the browser-style manifest JSON fixture, what is the value of the top-level name field?</question>
+    <answer>ScalpelReliabilitySuite</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>In the same manifest fixture, what permission appears between fileSystem and clipboard?</question>
+    <answer>network</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Find the deeply nested text fixture five directories below nested/. What is its file name?</question>
+    <answer>deep-file.txt</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>The testing notes describe the tiny Python helper source. How many lines does that tiny helper file have? Answer with a number only.</question>
+    <answer>2</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>In the ambiguous marker fixture, what content is inside the third repeated generic section?</question>
+    <answer>content block C</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>In the TypeScript generated-code fixture, what TODO comment text appears inside the generated code?</question>
+    <answer>TODO: implement validation</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>In the testing notes, which fixture is described as the append/prepend target? Answer with the path exactly as written in the heading.</question>
+    <answer>docs/CHANGELOG.md</answer>
+  </qa_pair>
+</evaluation>

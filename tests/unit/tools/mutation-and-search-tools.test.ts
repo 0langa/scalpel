@@ -24,9 +24,9 @@ describe("mutation and search tools", () => {
       const result = await createTool(
         {
           path: "nested/file.txt",
-          content: "hello\n"
+          content: "hello\n",
         },
-        config
+        config,
       );
 
       expect(result.ok).toBe(true);
@@ -42,9 +42,9 @@ describe("mutation and search tools", () => {
         {
           path: "nested/file.txt",
           content: "hello\n",
-          dry_run: true
+          dry_run: true,
         },
-        config
+        config,
       );
 
       expect(result.ok).toBe(true);
@@ -72,9 +72,9 @@ describe("mutation and search tools", () => {
           path: "file.txt",
           content: "new\n",
           overwrite: true,
-          expected_sha256: "not-the-current-sha"
+          expected_sha256: "not-the-current-sha",
         },
-        config
+        config,
       );
       expect(stale.ok).toBe(false);
       if (!stale.ok) {
@@ -87,9 +87,9 @@ describe("mutation and search tools", () => {
           content: "new\n",
           overwrite: true,
           expected_sha256: before.data.sha256,
-          expected_mtime_ms: before.data.mtimeMs
+          expected_mtime_ms: before.data.mtimeMs,
         },
-        config
+        config,
       );
 
       expect(applied.ok).toBe(true);
@@ -108,14 +108,16 @@ describe("mutation and search tools", () => {
           path: "main.ts",
           edits: [
             { old_string: "alpha = 1", new_string: "alpha = 10" },
-            { old_string: "beta = 2", new_string: "beta = 20" }
-          ]
+            { old_string: "beta = 2", new_string: "beta = 20" },
+          ],
         },
-        config
+        config,
       );
 
       expect(result.ok).toBe(true);
-      await expect(readFile(filePath, "utf8")).resolves.toBe("const alpha = 10;\nconst beta = 20;\n");
+      await expect(readFile(filePath, "utf8")).resolves.toBe(
+        "const alpha = 10;\nconst beta = 20;\n",
+      );
     });
   });
 
@@ -130,10 +132,10 @@ describe("mutation and search tools", () => {
           path: "main.ts",
           edits: [
             { old_string: "alpha = 1", new_string: "alpha = 10" },
-            { old_string: "gamma = 3", new_string: "gamma = 30" }
-          ]
+            { old_string: "gamma = 3", new_string: "gamma = 30" },
+          ],
         },
-        config
+        config,
       );
 
       expect(result.ok).toBe(false);
@@ -151,9 +153,9 @@ describe("mutation and search tools", () => {
         {
           path: "main.ts",
           content: "line two\n",
-          line: 2
+          line: 2,
         },
-        config
+        config,
       );
 
       expect(result.ok).toBe(true);
@@ -171,9 +173,9 @@ describe("mutation and search tools", () => {
         {
           path: "main.ts",
           start_line: 2,
-          end_line: 3
+          end_line: 3,
         },
-        config
+        config,
       );
 
       expect(result.ok).toBe(true);
@@ -184,11 +186,7 @@ describe("mutation and search tools", () => {
   test("replace_between_markers keeps markers and swaps inner content", async () => {
     await withTempDir(async (root) => {
       const filePath = join(root, "config.txt");
-      await writeFile(
-        filePath,
-        "before\nBEGIN\nold one\nold two\nEND\nafter\n",
-        "utf8"
-      );
+      await writeFile(filePath, "before\nBEGIN\nold one\nold two\nEND\nafter\n", "utf8");
 
       const config = createConfig({ roots: [root] });
       const result = await replaceBetweenMarkersTool(
@@ -196,14 +194,14 @@ describe("mutation and search tools", () => {
           path: "config.txt",
           start_marker: "BEGIN",
           end_marker: "END",
-          new_content: "fresh line\n"
+          new_content: "fresh line\n",
         },
-        config
+        config,
       );
 
       expect(result.ok).toBe(true);
       await expect(readFile(filePath, "utf8")).resolves.toBe(
-        "before\nBEGIN\nfresh line\nEND\nafter\n"
+        "before\nBEGIN\nfresh line\nEND\nafter\n",
       );
     });
   });
@@ -219,9 +217,9 @@ describe("mutation and search tools", () => {
           path: "config.txt",
           start_marker: "BEGIN",
           end_marker: "END",
-          new_content: "BEGIN\nfresh line\nEND\n"
+          new_content: "BEGIN\nfresh line\nEND\n",
         },
-        config
+        config,
       );
 
       expect(result.ok).toBe(false);
@@ -241,13 +239,15 @@ describe("mutation and search tools", () => {
         {
           path: "main.ts",
           after_marker: "marker",
-          content: "line two"
+          content: "line two",
         },
-        config
+        config,
       );
 
       expect(result.ok).toBe(true);
-      await expect(readFile(filePath, "utf8")).resolves.toBe("line one\nmarker\nline two\nline three\n");
+      await expect(readFile(filePath, "utf8")).resolves.toBe(
+        "line one\nmarker\nline two\nline three\n",
+      );
     });
   });
 
@@ -257,9 +257,9 @@ describe("mutation and search tools", () => {
       const result = await appendTool(
         {
           path: "logs/activity.log",
-          content: "entry 1\n"
+          content: "entry 1\n",
         },
-        config
+        config,
       );
 
       expect(result.ok).toBe(true);
@@ -277,17 +277,17 @@ describe("mutation and search tools", () => {
         {
           path: "log.txt",
           content: "tail\n",
-          dry_run: true
+          dry_run: true,
         },
-        config
+        config,
       );
       const prepend = await prependTool(
         {
           path: "log.txt",
           content: "head\n",
-          dry_run: true
+          dry_run: true,
         },
-        config
+        config,
       );
 
       expect(append.ok).toBe(true);
@@ -308,17 +308,17 @@ describe("mutation and search tools", () => {
         {
           path: "missing-append.txt",
           content: "tail\n",
-          expected_sha256: "abc"
+          expected_sha256: "abc",
         },
-        config
+        config,
       );
       const prepend = await prependTool(
         {
           path: "missing-prepend.txt",
           content: "head\n",
-          expected_mtime_ms: 1
+          expected_mtime_ms: 1,
         },
-        config
+        config,
       );
 
       expect(append.ok).toBe(false);
@@ -338,9 +338,9 @@ describe("mutation and search tools", () => {
       const result = await moveTool(
         {
           source: "old.txt",
-          destination: "nested/new.txt"
+          destination: "nested/new.txt",
         },
-        config
+        config,
       );
 
       expect(result.ok).toBe(true);
@@ -358,9 +358,9 @@ describe("mutation and search tools", () => {
         {
           source: "old.txt",
           destination: "nested/new.txt",
-          dry_run: true
+          dry_run: true,
         },
-        config
+        config,
       );
 
       expect(result.ok).toBe(true);
@@ -397,9 +397,9 @@ describe("mutation and search tools", () => {
           destination: "new.txt",
           overwrite: true,
           expected_source_sha256: source.data.sha256,
-          expected_destination_sha256: "not-the-current-sha"
+          expected_destination_sha256: "not-the-current-sha",
         },
-        config
+        config,
       );
       expect(staleDestination.ok).toBe(false);
       if (!staleDestination.ok) {
@@ -414,9 +414,9 @@ describe("mutation and search tools", () => {
           expected_source_sha256: source.data.sha256,
           expected_source_mtime_ms: source.data.mtimeMs,
           expected_destination_sha256: destination.data.sha256,
-          expected_destination_mtime_ms: destination.data.mtimeMs
+          expected_destination_mtime_ms: destination.data.mtimeMs,
         },
-        config
+        config,
       );
 
       expect(moved.ok).toBe(true);
@@ -435,9 +435,9 @@ describe("mutation and search tools", () => {
         {
           source: "source-dir",
           destination: "sha-dir",
-          expected_source_sha256: "abc"
+          expected_source_sha256: "abc",
         },
-        config
+        config,
       );
       expect(rejected.ok).toBe(false);
       if (!rejected.ok) {
@@ -448,9 +448,9 @@ describe("mutation and search tools", () => {
         {
           source: "source-dir",
           destination: "mtime-dir",
-          expected_source_mtime_ms: directory.mtimeMs
+          expected_source_mtime_ms: directory.mtimeMs,
         },
-        config
+        config,
       );
       expect(accepted.ok).toBe(true);
     });
@@ -467,15 +467,74 @@ describe("mutation and search tools", () => {
         {
           path: "src",
           pattern: "value",
-          max_results: 10
+          max_results: 10,
         },
-        config
+        config,
       );
 
       expect(result.ok).toBe(true);
 
       if (result.ok) {
         expect(result.data.total_matches).toBe(2);
+        expect(result.data.has_more).toBe(false);
+      }
+    });
+  });
+
+  test("grep supports globs, context lines, and has_more metadata", async () => {
+    await withTempDir(async (root) => {
+      await mkdir(join(root, "src"), { recursive: true });
+      await mkdir(join(root, "docs"), { recursive: true });
+      await writeFile(join(root, "src", "one.ts"), "before\nneedle one\nafter\n", "utf8");
+      await writeFile(join(root, "src", "two.ts"), "needle two\n", "utf8");
+      await writeFile(join(root, "docs", "notes.md"), "needle docs\n", "utf8");
+
+      const config = createConfig({ roots: [root], maxGrepResults: 1 });
+      const result = await grepTool(
+        {
+          path: ".",
+          pattern: "needle",
+          include_globs: ["src/*.ts"],
+          before_context: 1,
+          after_context: 1,
+        },
+        config,
+      );
+
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.data.total_matches).toBe(1);
+        expect(result.data.has_more).toBe(true);
+        expect(result.data.matches[0]).toMatchObject({
+          relativePath: "src/one.ts",
+          line: 2,
+          before_context: [{ line: 1, content: "before" }],
+          after_context: [{ line: 3, content: "after" }],
+        });
+      }
+    });
+  });
+
+  test("grep excludes matching glob patterns", async () => {
+    await withTempDir(async (root) => {
+      await mkdir(join(root, "src"), { recursive: true });
+      await writeFile(join(root, "src", "one.ts"), "needle one\n", "utf8");
+      await writeFile(join(root, "src", "skip.test.ts"), "needle test\n", "utf8");
+
+      const config = createConfig({ roots: [root], maxGrepResults: 10 });
+      const result = await grepTool(
+        {
+          path: ".",
+          pattern: "needle",
+          exclude_globs: ["src/*.test.ts"],
+        },
+        config,
+      );
+
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.data.matches.map((match) => match.relativePath)).toEqual(["src/one.ts"]);
+        expect(result.data.has_more).toBe(false);
       }
     });
   });
@@ -497,7 +556,7 @@ describe("mutation and search tools", () => {
         expect(result.data.skipped_files.map((file) => file.reason).sort()).toEqual([
           "binary",
           "non_utf8",
-          "too_large"
+          "too_large",
         ]);
       }
     });
@@ -525,18 +584,18 @@ describe("mutation and search tools", () => {
       const config = createConfig({
         roots: [root],
         journalEnabled: true,
-        journalPath
+        journalPath,
       });
 
       const failed = await patchTool(
         { path: "notes.txt", old_string: "alpha", new_string: "SECRET" },
-        config
+        config,
       );
       expect(failed.ok).toBe(false);
 
       const preview = await appendTool(
         { path: "notes.txt", content: "SECRET\n", dry_run: true },
-        config
+        config,
       );
       expect(preview.ok).toBe(true);
 
@@ -545,7 +604,9 @@ describe("mutation and search tools", () => {
 
       const lines = (await readFile(journalPath, "utf8")).trim().split("\n");
       expect(lines).toHaveLength(3);
-      const records = lines.map((line) => JSON.parse(line) as { tool: string; applied: boolean; error_code?: string });
+      const records = lines.map(
+        (line) => JSON.parse(line) as { tool: string; applied: boolean; error_code?: string },
+      );
       expect(records.map((record) => record.tool)).toEqual(["patch", "append", "append"]);
       expect(records[0]?.error_code).toBe("STRING_NOT_UNIQUE");
       expect(records[1]?.applied).toBe(false);
@@ -565,9 +626,9 @@ describe("mutation and search tools", () => {
         {
           path: "src",
           pattern: "[unterminated",
-          regex: true
+          regex: true,
         },
-        config
+        config,
       );
 
       expect(result.ok).toBe(false);
@@ -595,14 +656,144 @@ describe("mutation and search tools", () => {
           path: "main.ts",
           line: 2,
           content: "line two",
-          expected_sha256: before.data.sha256
+          expected_sha256: before.data.sha256,
         },
-        config
+        config,
       );
 
       expect(result.ok).toBe(false);
       if (!result.ok) {
         expect(result.error.code).toBe("CONCURRENCY_CONFLICT");
+      }
+    });
+  });
+
+  test("concurrent patch calls with the same expected_sha256 allow at most one write", async () => {
+    await withTempDir(async (root) => {
+      const filePath = join(root, "contended.txt");
+      await writeFile(filePath, "alpha\n", "utf8");
+
+      const config = createConfig({ roots: [root] });
+      const before = await statTool({ path: "contended.txt" }, config);
+      if (!before.ok || before.data.sha256 === undefined) {
+        throw new Error("expected initial stat to include sha256");
+      }
+
+      const [left, right] = await Promise.all([
+        patchTool(
+          {
+            path: "contended.txt",
+            old_string: "alpha",
+            new_string: "left",
+            expected_sha256: before.data.sha256,
+          },
+          config,
+        ),
+        patchTool(
+          {
+            path: "contended.txt",
+            old_string: "alpha",
+            new_string: "right",
+            expected_sha256: before.data.sha256,
+          },
+          config,
+        ),
+      ]);
+
+      const applied = [left, right].filter((result) => result.ok).length;
+      expect(applied).toBe(1);
+      expect(
+        [left, right].some((result) => !result.ok && result.error.code === "CONCURRENCY_CONFLICT"),
+      ).toBe(true);
+      await expect(readFile(filePath, "utf8")).resolves.toMatch(/^(left|right)\n$/u);
+    });
+  });
+
+  test("mutations reject files changed by external interference before commit", async () => {
+    await withTempDir(async (root) => {
+      const filePath = join(root, "externally-changed.txt");
+      const previousPath = process.env.SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_PATH;
+      const previousContent = process.env.SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_CONTENT;
+      const previousMode = process.env.SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_MODE;
+      await writeFile(filePath, "alpha\n", "utf8");
+
+      process.env.SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_PATH = filePath;
+      process.env.SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_MODE = "write";
+      process.env.SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_CONTENT = "external\n";
+
+      try {
+        const config = createConfig({ roots: [root] });
+        const result = await patchTool(
+          {
+            path: "externally-changed.txt",
+            old_string: "alpha",
+            new_string: "scalpel",
+          },
+          config,
+        );
+
+        expect(result.ok).toBe(false);
+        if (!result.ok) {
+          expect(result.error.code).toBe("CONCURRENCY_CONFLICT");
+        }
+        await expect(readFile(filePath, "utf8")).resolves.toBe("external\n");
+      } finally {
+        if (previousPath === undefined) {
+          delete process.env.SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_PATH;
+        } else {
+          process.env.SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_PATH = previousPath;
+        }
+        if (previousContent === undefined) {
+          delete process.env.SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_CONTENT;
+        } else {
+          process.env.SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_CONTENT = previousContent;
+        }
+        if (previousMode === undefined) {
+          delete process.env.SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_MODE;
+        } else {
+          process.env.SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_MODE = previousMode;
+        }
+      }
+    });
+  });
+
+  test("mutations reject files deleted by external interference before commit", async () => {
+    await withTempDir(async (root) => {
+      const filePath = join(root, "externally-deleted.txt");
+      const previousPath = process.env.SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_PATH;
+      const previousMode = process.env.SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_MODE;
+      await writeFile(filePath, "alpha\n", "utf8");
+
+      process.env.SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_PATH = filePath;
+      process.env.SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_MODE = "delete";
+
+      try {
+        const config = createConfig({ roots: [root] });
+        const result = await patchTool(
+          {
+            path: "externally-deleted.txt",
+            old_string: "alpha",
+            new_string: "scalpel",
+          },
+          config,
+        );
+
+        expect(result.ok).toBe(false);
+        if (!result.ok) {
+          expect(result.error.code).toBe("CONCURRENCY_CONFLICT");
+        }
+        await expect(readFile(filePath, "utf8")).rejects.toThrow();
+      } finally {
+        if (previousPath === undefined) {
+          delete process.env.SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_PATH;
+        } else {
+          process.env.SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_PATH = previousPath;
+        }
+        if (previousMode === undefined) {
+          delete process.env.SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_MODE;
+        } else {
+          process.env.SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_MODE = previousMode;
+        }
       }
     });
   });

@@ -45,6 +45,31 @@ Build:
 pnpm build
 ```
 
+Run the built package entry:
+
+```bash
+pnpm build
+node dist/index.js
+```
+
+Codex CLI setup after building locally:
+
+```bash
+codex mcp add scalpel --env SCALPEL_ROOTS=/repo -- node /path/to/scalpel/dist/index.js
+codex mcp list
+```
+
+Equivalent `config.toml` entry:
+
+```toml
+[mcp_servers.scalpel]
+command = "node"
+args = ["/path/to/scalpel/dist/index.js"]
+
+[mcp_servers.scalpel.env]
+SCALPEL_ROOTS = "/repo"
+```
+
 Verify:
 
 ```bash
@@ -52,6 +77,7 @@ pnpm typecheck
 pnpm test
 pnpm build
 pnpm test:mcp-smoke
+pnpm test:package-smoke
 ```
 
 Full release validation:
@@ -73,6 +99,7 @@ pnpm validate
 - Mutating tools support `dry_run`; content tools return unified diffs and `move` returns a move plan.
 - Operation journaling is optional and records metadata only, never file content.
 - MCP failures are returned with `isError: true`, text containing the Scalpel error code, and `structuredContent.error`.
+- Read-only MCP resources expose Scalpel safety, tool contract, testing, and live config context.
 
 ## Edit Semantics
 
@@ -107,6 +134,13 @@ SCALPEL_ROOTS=/repo pnpm dev
 - Optional JSONL journal path
 - Defaults to `.scalpel-journal.jsonl` under the first root when journaling is enabled
 
+`SCALPEL_DURABILITY`
+
+- Optional
+- Set to `strict` to flush temp-file content before rename and attempt parent-directory flush
+- Default: best-effort atomic rename without explicit durability flush
+- Parent-directory flush support is platform-dependent; unsupported flushes are reported as warnings
+
 ## Docs
 
 - [SCALPEL_MASTER_HANDBOOK.md](./SCALPEL_MASTER_HANDBOOK.md)
@@ -122,4 +156,6 @@ SCALPEL_ROOTS=/repo pnpm dev
 - [docs/TESTING_AND_RELIABILITY.md](./docs/TESTING_AND_RELIABILITY.md)
 - [docs/AUDIT.md](./docs/AUDIT.md)
 - [docs/DOCS_MAINTENANCE.md](./docs/DOCS_MAINTENANCE.md)
+- [docs/HARDENING.md](./docs/HARDENING.md)
 - [docs/STACK.md](./docs/STACK.md)
+- [evals/README.md](./evals/README.md)

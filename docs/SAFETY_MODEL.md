@@ -87,11 +87,13 @@ When enabled with `SCALPEL_JOURNAL_ENABLED`, mutating tools append JSONL records
 
 This gives best-effort local filesystem replacement atomicity.
 
+When `SCALPEL_DURABILITY=strict` is set, content writes also flush the temp file before rename and attempt to flush the parent directory after rename. Parent-directory flush support is platform-dependent, especially on Windows. Unsupported parent flushes are reported as non-fatal warnings.
+
 Not guaranteed today:
 
-- crash durability
+- crash recovery
 - temp-file cleanup after interrupted writes
-- parent-directory `fsync`
+- guaranteed parent-directory `fsync` on every platform
 - protection against all race windows between validation and rename
 - cross-device move semantics
 
@@ -101,7 +103,7 @@ Not guaranteed today:
 | --- | --- | --- |
 | Full-file memory loading | Full-text mutators still require whole-file UTF-8 snapshots under `maxReadBytes`; `read_chunk` and ranged `read` are bounded read paths | Large edit workloads still need future streaming edit design |
 | Failure payload compatibility | Failure keeps text plus `structuredContent.error` | Older clients still parse text; newer agents can use structured errors |
-| Durability | Rename without `fsync` | Power loss can leave uncertain persistence |
+| Durability | Default mode uses rename without explicit `fsync`; strict mode flushes file content and attempts parent directory flush | Power loss can leave uncertain persistence, especially where directory flush is unsupported |
 | Race windows | Path validation and write are separate steps | Files can change between validation and operation |
 | Binary files | Text tools detect and reject binary/non-UTF-8 files; binary editing is unsupported | Prevents corruption but does not provide byte-edit workflows |
 | Search traversal | Sequential recursive traversal | Slow for large trees |

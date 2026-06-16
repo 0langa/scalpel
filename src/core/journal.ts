@@ -68,3 +68,7 @@ export function textState(content: string): JournalState {
     size_bytes: Buffer.byteLength(content, "utf8")
   };
 }
+
+export function combineWarnings(...warnings: string[][]): string[] {
+  return warnings.flat();
+}

@@ -20,6 +20,7 @@ describe("read-only tools", () => {
       maxReadBytes: 123,
       maxDiffBytes: 456,
       maxGrepResults: 7,
+      durability: "strict",
       journalEnabled: true,
       journalPath: join(root, "journal.jsonl"),
       logLevel: "debug"
@@ -34,6 +35,7 @@ describe("read-only tools", () => {
       expect(result.data.maxReadBytes).toBe(123);
       expect(result.data.maxDiffBytes).toBe(456);
       expect(result.data.maxGrepResults).toBe(7);
+      expect(result.data.durability).toBe("strict");
       expect(result.data.journalEnabled).toBe(true);
       expect(result.data.journalPath).toBe(join(root, "journal.jsonl"));
       expect(result.data.logLevel).toBe("debug");

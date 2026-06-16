@@ -18,6 +18,8 @@ Current implementation focuses on:
 - optimistic concurrency checks for mutating tools
 - optional operation journaling
 - simple recursive search
+- package smoke coverage for the built `scalpel` bin path
+- read-only MCP resources for core Scalpel docs and live config
 
 Current implementation does not yet provide:
 
@@ -102,13 +104,25 @@ Other config values are code defaults in `src/core/config.ts`:
 | `maxReadBytes` | `2097152` |
 | `maxDiffBytes` | `2097152` |
 | `maxGrepResults` | `200` |
+| `durability` | `"default"` |
 | `journalEnabled` | `false` |
 | `journalPath` | unset |
 | `logLevel` | `"error"` |
 
 `SCALPEL_JOURNAL_ENABLED=true` or `1` enables JSONL operation journaling. `SCALPEL_JOURNAL_PATH` sets the journal path; otherwise it defaults under the first root. Journal records contain metadata only, not file content.
 
+`SCALPEL_DURABILITY=strict` enables strict content-write durability. Strict mode fsyncs the temp file before rename and attempts a parent-directory fsync after rename. Parent-directory fsync support depends on the host platform; unsupported flushes are returned as warnings.
+
 `maxDiffBytes` and `logLevel` exist in config but are not widely enforced or wired into runtime behavior yet.
+
+## MCP Resources
+
+Scalpel exposes read-only MCP resources for agent context:
+
+- `scalpel://docs/safety`
+- `scalpel://docs/tool-contracts`
+- `scalpel://docs/testing`
+- `scalpel://config/current`
 
 ## Test Layout
 

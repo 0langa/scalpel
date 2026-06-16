@@ -90,6 +90,12 @@ async function runSmoke(client: Client, root: string, journalPath: string): Prom
   check("all canonical tools listed", canonical.every((name) => names.has(name)));
   check("all namespaced aliases listed", canonical.every((name) => names.has(`scalpel_${name}`)));
 
+  const resources = await client.listResources();
+  const resourceUris = new Set(resources.resources.map((resource) => resource.uri));
+  check("expected resources listed", ["scalpel://docs/safety", "scalpel://docs/tool-contracts", "scalpel://docs/testing", "scalpel://config/current"].every((uri) => resourceUris.has(uri)));
+  const safety = await client.readResource({ uri: "scalpel://docs/safety" });
+  check("safety resource readable", JSON.stringify(safety.contents).includes("Safety Model"));
+
   await callOk(client, "config", {}, "config");
   await callOk(client, "create", { path: "work.txt", content: "alpha\nbeta\n" }, "create");
   await callOk(client, "stat", { path: "work.txt" }, "stat");

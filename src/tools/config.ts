@@ -9,6 +9,7 @@ type ConfigResult = {
   maxReadBytes: number;
   maxDiffBytes: number;
   maxGrepResults: number;
+  durability: ScalpelConfig["durability"];
   journalEnabled: boolean;
   journalPath?: string;
   logLevel: ScalpelConfig["logLevel"];
@@ -17,6 +18,7 @@ type ConfigResult = {
     SCALPEL_ROOTS?: string;
     SCALPEL_JOURNAL_ENABLED?: string;
     SCALPEL_JOURNAL_PATH?: string;
+    SCALPEL_DURABILITY?: string;
     pathDelimiter: string;
   };
 };
@@ -35,6 +37,9 @@ export function configTool(config: ScalpelConfig): DomainResult<ConfigResult> {
   if (process.env.SCALPEL_JOURNAL_PATH !== undefined) {
     env.SCALPEL_JOURNAL_PATH = process.env.SCALPEL_JOURNAL_PATH;
   }
+  if (process.env.SCALPEL_DURABILITY !== undefined) {
+    env.SCALPEL_DURABILITY = process.env.SCALPEL_DURABILITY;
+  }
 
   const result: ConfigResult = {
     roots: config.roots,
@@ -42,6 +47,7 @@ export function configTool(config: ScalpelConfig): DomainResult<ConfigResult> {
     maxReadBytes: config.maxReadBytes,
     maxDiffBytes: config.maxDiffBytes,
     maxGrepResults: config.maxGrepResults,
+    durability: config.durability,
     journalEnabled: config.journalEnabled,
     logLevel: config.logLevel,
     cwd: process.cwd(),

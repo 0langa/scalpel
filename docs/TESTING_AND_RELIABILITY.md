@@ -12,6 +12,7 @@ pnpm typecheck
 pnpm test
 pnpm build
 pnpm test:mcp-smoke
+pnpm test:package-smoke
 ```
 
 Or run the full gate:
@@ -20,7 +21,7 @@ Or run the full gate:
 pnpm validate
 ```
 
-Current baseline: `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`, and `pnpm test:mcp-smoke` pass.
+Current baseline: `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`, `pnpm test:mcp-smoke`, and `pnpm test:package-smoke` pass.
 
 ## Current Automated Coverage
 
@@ -38,6 +39,8 @@ Unit tests cover:
 - grep skipped-file reasons
 - optional operation journal records
 - atomic validation behavior for `batch_edit`
+- strict durability mode
+- grep globs, context lines, and result continuation metadata
 
 Integration tests cover:
 
@@ -50,6 +53,7 @@ Integration tests cover:
 - failure `isError: true`
 - failure `structuredContent.error`
 - `config` over MCP
+- read-only MCP resources over MCP
 - mutating dry-run behavior over MCP
 
 ## MCP Smoke Harness
@@ -64,8 +68,21 @@ It verifies:
 - structured errors
 - large-file and binary guards
 - metadata-only operation journal
+- package `scalpel` bin launch path
 
 Reports are written to `tmp/mcp-smoke/<timestamp>/report.md` and `report.json` unless `SCALPEL_SMOKE_OUT` is set.
+
+## MCP Effectiveness Eval
+
+`evals/read-only/scalpel-reliability.xml` contains 10 stable, read-only questions over `scalpel-reliability-suite/`.
+
+This eval supplements the smoke harness. It is designed to check whether an agent can answer realistic questions through Scalpel tools without mutating the fixture tree.
+
+## Hardening Suite
+
+`scripts/hardening.ts` is the first crash/race/corpus hardening harness for the `1.0.0` goal.
+
+It clones public starter corpora under `C:\Users\Julius\source\repos\scalpel_functionality\scalpel-hardening`, launches Scalpel through MCP, and writes machine-readable reports outside the repo. See `docs/HARDENING.md`.
 
 ## Reliability Suite Role
 

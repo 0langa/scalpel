@@ -87,6 +87,7 @@ Content-replacement mutations route through the shared atomic write helper.
 Current guarantee:
 
 - best-effort atomic replace on the local filesystem through temp-file write plus rename
+- optional strict content-write durability with temp-file flush and best-effort parent-directory flush
 
 This is intentionally a little narrower than a full crash-durability claim.
 

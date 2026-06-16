@@ -51,6 +51,17 @@ describe("stdio server", () => {
       expect(toolList.tools.some((tool) => tool.name === "scalpel_read")).toBe(true);
       expect(toolList.tools.some((tool) => tool.name === "scalpel_patch")).toBe(true);
 
+      const resourceList = await client.listResources();
+      expect(resourceList.resources.some((resource) => resource.uri === "scalpel://docs/safety")).toBe(true);
+      expect(resourceList.resources.some((resource) => resource.uri === "scalpel://config/current")).toBe(true);
+
+      const safetyResource = await client.readResource({ uri: "scalpel://docs/safety" });
+      expect(resourceText(safetyResource.contents)).toContain("Safety Model");
+
+      const configResource = await client.readResource({ uri: "scalpel://config/current" });
+      const configText = resourceText(configResource.contents);
+      expect(JSON.parse(configText) as unknown).toMatchObject({ roots: [root] });
+
       const configResult = await client.callTool({
         name: "config",
         arguments: {}
@@ -203,3 +214,19 @@ describe("stdio server", () => {
     });
   }, 15000);
 });
+
+function resourceText(contents: unknown): string {
+  if (!Array.isArray(contents)) {
+    throw new Error("expected resource contents array");
+  }
+  const first = contents[0] as unknown;
+  if (
+    typeof first !== "object" ||
+    first === null ||
+    !("text" in first) ||
+    typeof first.text !== "string"
+  ) {
+    throw new Error("expected text resource content");
+  }
+  return first.text;
+}

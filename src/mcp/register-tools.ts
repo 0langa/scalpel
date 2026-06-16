@@ -20,19 +20,12 @@ import { readTool } from "../tools/read.js";
 import { replaceBetweenMarkersTool } from "../tools/replace-between-markers.js";
 import { statTool } from "../tools/stat.js";
 import { mutatingAnnotations, readOnlyAnnotations } from "./annotations.js";
+import { withErrorOutput } from "./output-schema.js";
 import { toCallToolResult } from "./result.js";
 
 const pathSchema = z.object({
   path: z.string().min(1)
 });
-
-function withErrorOutput(_schema: z.ZodType): z.ZodType {
-  // SDK v1.29 validates every structuredContent response against outputSchema.
-  // Strict success/error unions currently fail inside the SDK, so keep runtime
-  // structured errors and advertise a permissive schema until that is fixed.
-  void _schema;
-  return z.object({}).catchall(z.unknown());
-}
 
 type RegisterToolOptions<InputSchema extends z.ZodType = z.ZodType> = {
   title?: string;
@@ -75,6 +68,7 @@ export function registerTools(server: McpServer, config: ScalpelConfig): void {
         maxReadBytes: z.number(),
         maxDiffBytes: z.number(),
         maxGrepResults: z.number(),
+        durability: z.enum(["default", "strict"]),
         journalEnabled: z.boolean(),
         journalPath: z.string().optional(),
         logLevel: z.enum(["silent", "error", "info", "debug"]),
@@ -83,6 +77,7 @@ export function registerTools(server: McpServer, config: ScalpelConfig): void {
           SCALPEL_ROOTS: z.string().optional(),
           SCALPEL_JOURNAL_ENABLED: z.string().optional(),
           SCALPEL_JOURNAL_PATH: z.string().optional(),
+          SCALPEL_DURABILITY: z.string().optional(),
           pathDelimiter: z.string()
         })
       })),
@@ -222,6 +217,10 @@ export function registerTools(server: McpServer, config: ScalpelConfig): void {
         path: z.string().min(1),
         pattern: z.string().min(1),
         regex: z.boolean().optional(),
+        include_globs: z.array(z.string().min(1)).optional(),
+        exclude_globs: z.array(z.string().min(1)).optional(),
+        before_context: z.number().int().nonnegative().optional(),
+        after_context: z.number().int().nonnegative().optional(),
         max_results: z.number().int().positive().optional()
       }),
       outputSchema: withErrorOutput(z.object({
@@ -230,10 +229,13 @@ export function registerTools(server: McpServer, config: ScalpelConfig): void {
             path: z.string(),
             relativePath: z.string(),
             line: z.number(),
-            content: z.string()
+            content: z.string(),
+            before_context: z.array(z.object({ line: z.number(), content: z.string() })).optional(),
+            after_context: z.array(z.object({ line: z.number(), content: z.string() })).optional()
           })
         ),
         total_matches: z.number(),
+        has_more: z.boolean(),
         skipped_files: z.array(
           z.object({
             path: z.string(),
