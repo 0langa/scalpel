@@ -90,6 +90,7 @@ export async function prependTool(
       before: before.data,
       maxReadBytes: config.maxReadBytes,
       durability: config.durability,
+      transactionDir: config.transactionDir,
     });
     if (!writeResult.ok) {
       return writeResult;

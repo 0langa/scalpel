@@ -78,7 +78,17 @@ export async function grepTool(
     }
   }
 
-  await visit(resolved.data, config, async (filePath) => {
+  await visit(
+    resolved.data,
+    config,
+    (directoryPath) => {
+      if (directoryPath === resolved.data) {
+        return true;
+      }
+      const relativePath = `${toRelativeDisplayPath(displayRoot, directoryPath)}/`;
+      return !excludedByGlobs(relativePath, excludePatterns);
+    },
+    async (filePath) => {
     if (hasMore) {
       return false;
     }
@@ -145,7 +155,8 @@ export async function grepTool(
     }
 
     return !hasMore;
-  });
+    },
+  );
 
   const returnedMatches = matches.slice(0, limit);
   return success({
@@ -172,16 +183,20 @@ function skipReason(code: string): GrepResult["skipped_files"][number]["reason"]
 async function visit(
   path: string,
   config: ScalpelConfig,
+  onDirectory: (directoryPath: string) => boolean,
   onFile: (filePath: string) => Promise<boolean>
 ): Promise<boolean> {
   const info = await stat(path);
   if (info.isDirectory()) {
+    if (!onDirectory(path)) {
+      return true;
+    }
     const children = await readdir(path);
     for (const child of children.sort((left, right) => left.localeCompare(right))) {
       if (!config.allowHiddenPaths && child.startsWith(".")) {
         continue;
       }
-      const shouldContinue = await visit(join(path, child), config, onFile);
+      const shouldContinue = await visit(join(path, child), config, onDirectory, onFile);
       if (!shouldContinue) {
         return false;
       }
@@ -219,15 +234,24 @@ function includedByGlobs(
   includePatterns: RegExp[],
   excludePatterns: RegExp[]
 ): boolean {
-  if (excludePatterns.some((pattern) => pattern.test(relativePath))) {
+  if (excludedByGlobs(relativePath, excludePatterns)) {
     return false;
   }
   return includePatterns.length === 0 || includePatterns.some((pattern) => pattern.test(relativePath));
 }
 
+function excludedByGlobs(relativePath: string, excludePatterns: RegExp[]): boolean {
+  return excludePatterns.some((pattern) => pattern.test(relativePath));
+}
+
 function globToRegExp(pattern: string): RegExp {
   let source = "^";
-  for (let index = 0; index < pattern.length; index += 1) {
+  let startIndex = 0;
+  if (pattern.startsWith("**/")) {
+    source += "(?:.*/)?";
+    startIndex = 3;
+  }
+  for (let index = startIndex; index < pattern.length; index += 1) {
     const char = pattern[index];
     const next = pattern[index + 1];
 

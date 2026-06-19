@@ -45,6 +45,9 @@ pnpm hardening:setup -- --expanded
 pnpm hardening:all -- --expanded
 ```
 
+Disposable corpus mutation copies are removed after each check. Pass
+`--retain-copies` only when inspecting a failed copy manually.
+
 ## Lock Configuration
 
 Mutating tools acquire path locks in memory and through an atomic lock directory
@@ -58,10 +61,20 @@ so cooperative Scalpel server processes serialize commits to the same target.
 - `SCALPEL_LOCK_STALE_MS` controls when a lock owned by a dead process can be
   recovered. The default is `300000`; set `0` to disable stale-lock recovery.
 
+## Fault Injection
+
+`SCALPEL_FAULT_POINT` is a hardening-only test hook. When set to a named crash
+point, the server exits immediately at that point so the crash lane can restart
+Scalpel and verify recovery invariants. It is not intended for normal user
+configuration.
+
 ## What V0 Proves
 
 - Scalpel can run over public code corpora through MCP.
 - Basic corpus traversal, bounded reads, grep, root confinement, and path escape rejection work.
+- Corpus reports include tracked-file counts for each pinned clone.
+- The corpus lane runs mutation smoke checks against disposable local shared
+  clones and verifies the original fixture commit/status are unchanged.
 - Synthetic stale-write checks reject stale SHA preconditions.
 - In-process mutations are path-serialized for the current mutator set:
   `patch`, `create`, `append`, `prepend`, `batch_edit`, `insert`,
@@ -79,13 +92,23 @@ so cooperative Scalpel server processes serialize commits to the same target.
   reported as a conflict.
 - Text-file mutators explicitly reject symlink swaps before commit and after
   commit before success is reported.
+- Text-file mutators and `move` write metadata-only transaction records for
+  recovery. Startup recovery reconciles interrupted temp-written or renamed text
+  writes and completed move records.
 - Stale path locks owned by dead processes are recovered after the configured
   stale threshold.
 - A first crash-interruption probe checks for absent-or-complete output and leftover temp files.
+- The crash lane proves startup recovery removes a leftover text-write temp
+  file, accepts a completed move transaction, and clears transaction records
+  before serving MCP calls.
+- The crash lane injects killed-process failures around text-write transaction
+  start, temp write, rename, parent flush, move transaction start, move rename,
+  move journal, and recovery record cleanup.
 
 ## What V0 Does Not Prove Yet
 
-- Full transactional crash recovery.
+- Cross-platform persistence guarantees for every filesystem and power-loss
+  scenario.
 - Race-proof final commit under malicious same-user filesystem interference
   after Scalpel reports success.
 - Recovery from a process crash while holding a path lock before the configured
@@ -161,6 +184,10 @@ Required proof:
 - Crash/fault matrix for every mutation tool.
 - Hardening crash lane launches child Scalpel processes, kills them at injected
   points, restarts, runs recovery, and checks invariants.
+- Hardening crash lane proves startup recovery for text-write and move
+  transaction records before the server serves MCP calls.
+- Hardening crash lane proves killed-process recovery for text writes, moves,
+  and recovery cleanup retry.
 - Reports include before/after hashes, transaction IDs, and recovery decisions
   without recording file content.
 
@@ -193,7 +220,7 @@ Expanded `1.0.0` corpora must include larger and more diverse projects:
 
 - `microsoft/TypeScript`
 - `kubernetes/kubernetes`
-- at least one very large C/C++ tree, such as `llvm/llvm-project`
+- `llvm/llvm-project`
 - at least one repository with many generated/vendor/binary files
 
 Required proof:
@@ -201,6 +228,7 @@ Required proof:
 - All clones are pinned by commit hash in the report.
 - Mutation tests run only on disposable copies.
 - Read-only corpus lanes prove no fixture mutation.
+- Reports include tracked file counts for each corpus.
 - Corpus reports live outside the repo under `scalpel_functionality`.
 
 ### 6. Machine-Readable Release Evidence
@@ -209,6 +237,8 @@ Required implementation:
 
 - Every hardening command writes `report.json` and `report.md`.
 - Required and advisory checks are separated.
+- Reports include suite duration, peak/final RSS, and per-check duration/RSS
+  telemetry.
 - `1.0.0` release requires all release-blocking checks to be required, not
   advisory.
 
@@ -223,9 +253,12 @@ Required proof:
 
 1. Define the exact guarantee boundary for changes after Scalpel reports
    success.
-2. Add transaction/recovery architecture before claiming crash recovery.
-3. Expand corpus lanes to TypeScript, Kubernetes, LLVM, and disposable mutation
-   copies.
-4. Add memory/time telemetry to corpus reports.
+2. Extend crash proof to platform-specific persistence semantics and any new
+   filesystem operation types added after text writes and moves.
+3. Retain the exact prerelease `pnpm hardening:all -- --expanded` report and
+   repeat the release-blocking lanes on a Unix-like filesystem before final
+   `1.0.0`.
+4. Add at least one corpus with many generated/vendor/binary files if the
+   expanded set does not surface enough skipped-file evidence.
 5. Add streaming mutation architecture for files larger than the configured
    full-read limit.

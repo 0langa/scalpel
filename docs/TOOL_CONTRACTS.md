@@ -30,7 +30,7 @@ All public tools resolve paths through `resolveWorkspacePath()`.
 
 ### `config`
 
-Returns live server configuration for the current MCP process, including configured roots, raw `SCALPEL_ROOTS` when present, path delimiter, current working directory, policy limits, durability mode, and journal settings.
+Returns live server configuration for the current MCP process, including configured roots, raw `SCALPEL_ROOTS` when present, path delimiter, current working directory, policy limits, durability mode, transaction directory, and journal settings.
 
 ### `stat`
 
@@ -94,6 +94,14 @@ Every public tool is also registered as `scalpel_<tool>`, for example `scalpel_r
 ## Operation Journal
 
 When `journalEnabled` is true, mutating tools append JSONL operation records. Records include timestamp, tool, paths, dry-run/applied status, error code when logged, and before/after hash/mtime/size metadata where available. Journal records never include file content. Journal write failures do not fail the mutation; successful tool results include `warnings` when journal writing fails.
+
+## Write Transactions
+
+Text-write mutators and `move` use metadata-only transaction records in
+`config.transactionDir`. Records include paths, intended output hash/size for
+text writes, state, and timestamp, but never file content. Startup recovery runs
+before the MCP server accepts calls and cleans interrupted text-write temp files,
+completed renamed text-write records, and completed move records.
 
 ## MCP Resources
 

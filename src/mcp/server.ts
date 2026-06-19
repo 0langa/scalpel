@@ -3,12 +3,13 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { type ScalpelConfig } from "../core/config.js";
 import { registerResources } from "./resources.js";
 import { registerTools } from "./register-tools.js";
+import { SCALPEL_VERSION } from "../version.js";
 
 export function createScalpelServer(config: ScalpelConfig): McpServer {
   const server = new McpServer(
     {
       name: "scalpel",
-      version: "0.1.0"
+      version: SCALPEL_VERSION
     },
     {
       instructions:

@@ -2,8 +2,12 @@ import { open, rename, unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
 
+import { crashIfFaultPoint } from "./fault-injection.js";
+import { beginWriteTransaction } from "./write-transaction.js";
+
 type WriteFileAtomicOptions = {
   durability?: "default" | "strict";
+  transactionDir?: string | undefined;
 };
 
 export async function writeFileAtomic(
@@ -13,6 +17,15 @@ export async function writeFileAtomic(
 ): Promise<string[]> {
   const tempPath = join(dirname(path), `.scalpel-${randomUUID()}.tmp`);
   const warnings: string[] = [];
+  const transaction = options.transactionDir === undefined
+    ? undefined
+    : await beginWriteTransaction({
+        transactionDir: options.transactionDir,
+        targetPath: path,
+        tempPath,
+        content,
+      });
+  crashIfFaultPoint("text_write.after_transaction_start");
 
   try {
     const handle = await open(tempPath, "w");
@@ -25,11 +38,17 @@ export async function writeFileAtomic(
       await handle.close();
     }
 
+    await transaction?.markTempWritten();
+    crashIfFaultPoint("text_write.after_temp_written");
     await rename(tempPath, path);
+    crashIfFaultPoint("text_write.after_rename");
+    await transaction?.markRenamed();
 
     if (options.durability === "strict") {
       warnings.push(...await flushParentDirectory(dirname(path)));
     }
+    crashIfFaultPoint("text_write.after_parent_flush");
+    await transaction?.complete();
   } catch (error) {
     await Promise.allSettled([unlink(tempPath)]);
     throw error;

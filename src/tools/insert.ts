@@ -121,6 +121,7 @@ export async function insertTool(
       before: snapshot.data,
       maxReadBytes: config.maxReadBytes,
       durability: config.durability,
+      transactionDir: config.transactionDir,
     });
     if (!writeResult.ok) {
       return writeResult;

@@ -17,6 +17,7 @@ Current implementation focuses on:
 - explicit large-file and binary/encoding guards for text tools
 - optimistic concurrency checks for mutating tools
 - optional operation journaling
+- metadata-only text-write and move transaction recovery at startup
 - simple recursive search
 - package smoke coverage for the built `scalpel` bin path
 - read-only MCP resources for core Scalpel docs and live config
@@ -24,7 +25,7 @@ Current implementation focuses on:
 Current implementation does not yet provide:
 
 - binary byte editing
-- crash recovery
+- cross-platform crash persistence guarantees for every filesystem and power-loss scenario
 - large-scale indexing
 - parallel traversal
 - structured parsing or AST-aware edits
@@ -105,6 +106,7 @@ Other config values are code defaults in `src/core/config.ts`:
 | `maxDiffBytes` | `2097152` |
 | `maxGrepResults` | `200` |
 | `durability` | `"default"` |
+| `transactionDir` | `<first root>\\.scalpel-transactions` |
 | `journalEnabled` | `false` |
 | `journalPath` | unset |
 | `logLevel` | `"error"` |
@@ -112,6 +114,12 @@ Other config values are code defaults in `src/core/config.ts`:
 `SCALPEL_JOURNAL_ENABLED=true` or `1` enables JSONL operation journaling. `SCALPEL_JOURNAL_PATH` sets the journal path; otherwise it defaults under the first root. Journal records contain metadata only, not file content.
 
 `SCALPEL_DURABILITY=strict` enables strict content-write durability. Strict mode fsyncs the temp file before rename and attempts a parent-directory fsync after rename. Parent-directory fsync support depends on the host platform; unsupported flushes are returned as warnings.
+
+`SCALPEL_TRANSACTION_DIR` overrides the metadata-only transaction directory.
+When unset, Scalpel stores text-write and move transaction records under the
+first root in `.scalpel-transactions` and runs startup recovery before accepting
+MCP calls. Records include paths, hashes, sizes, and state where relevant, but
+not file content.
 
 `maxDiffBytes` and `logLevel` exist in config but are not widely enforced or wired into runtime behavior yet.
 

@@ -4,7 +4,9 @@ Precise, atomic file editing for code and text over MCP.
 
 ## Status
 
-Working TypeScript MCP server with a tested `stdio` transport, 16 canonical tools plus `scalpel_*` aliases, MCP tool failures via `isError: true` plus `structuredContent.error`, large-file and binary guards, optional operation journaling, optimistic concurrency for mutating tools, and workspace-confined path policy.
+`1.0.0-alpha.1` prerelease. The Windows hardening baseline covers transaction recovery, killed-process fault injection, cooperative race handling, symlink-swap rejection, and expanded public-corpus stress. It is not the final `1.0.0` safety claim: streaming large-file mutation and Unix-like persistence evidence remain open.
+
+See [the prerelease notes](./docs/releases/2026-06-19-v1.0.0-alpha.1.md) for verification evidence and known gaps.
 
 ## Implemented Tools
 

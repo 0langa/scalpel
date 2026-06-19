@@ -3,10 +3,12 @@ import { dirname } from "node:path";
 
 import { type ScalpelConfig } from "../core/config.js";
 import { failure, success, type DomainResult } from "../core/errors.js";
+import { crashIfFaultPoint } from "../core/fault-injection.js";
 import { recordJournal, snapshotState } from "../core/journal.js";
 import { readPathStatForMutation } from "../core/mutation.js";
 import { withPathLock } from "../core/path-lock.js";
 import { resolveWorkspacePath } from "../core/path-policy.js";
+import { beginMoveTransaction } from "../core/write-transaction.js";
 
 type MoveInput = {
   source: string;
@@ -133,7 +135,16 @@ export async function moveTool(
     }
 
     await mkdir(dirname(destination.data), { recursive: true });
+    const transaction = await beginMoveTransaction({
+      transactionDir: config.transactionDir,
+      sourcePath: source.data,
+      destinationPath: destination.data,
+    });
+    crashIfFaultPoint("move.after_transaction_start");
     await rename(source.data, destination.data);
+    crashIfFaultPoint("move.after_rename");
+    await transaction.markRenamed();
+    crashIfFaultPoint("move.after_mark_renamed");
 
     const destinationAfter = await readPathStatForMutation({
       path: destination.data,
@@ -147,6 +158,8 @@ export async function moveTool(
       before: snapshotState(sourceStat.data),
       after: destinationAfter.ok ? snapshotState(destinationAfter.data) : undefined,
     });
+    crashIfFaultPoint("move.after_journal");
+    await transaction.complete();
 
     return success({
       ...result,

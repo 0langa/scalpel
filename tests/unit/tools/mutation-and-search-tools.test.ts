@@ -539,6 +539,33 @@ describe("mutation and search tools", () => {
     });
   });
 
+  test("grep prunes excluded directories including root hidden directories", async () => {
+    await withTempDir(async (root) => {
+      await mkdir(join(root, "src"), { recursive: true });
+      await mkdir(join(root, ".git", "objects"), { recursive: true });
+      await mkdir(join(root, "vendor", "lib"), { recursive: true });
+      await writeFile(join(root, "src", "one.ts"), "needle one\n", "utf8");
+      await writeFile(join(root, ".git", "objects", "hidden.txt"), "needle hidden\n", "utf8");
+      await writeFile(join(root, "vendor", "lib", "vendored.ts"), "needle vendor\n", "utf8");
+
+      const config = createConfig({ roots: [root], maxGrepResults: 10 });
+      const result = await grepTool(
+        {
+          path: ".",
+          pattern: "needle",
+          include_globs: ["**/*.ts", "**/*.txt"],
+          exclude_globs: ["**/.git/**", "**/vendor/**"],
+        },
+        config,
+      );
+
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.data.matches.map((match) => match.relativePath)).toEqual(["src/one.ts"]);
+      }
+    });
+  });
+
   test("grep reports skipped large, binary, and non-UTF-8 files", async () => {
     await withTempDir(async (root) => {
       await mkdir(join(root, "src"), { recursive: true });

@@ -10,6 +10,7 @@ type ConfigResult = {
   maxDiffBytes: number;
   maxGrepResults: number;
   durability: ScalpelConfig["durability"];
+  transactionDir: string;
   journalEnabled: boolean;
   journalPath?: string;
   logLevel: ScalpelConfig["logLevel"];
@@ -19,6 +20,7 @@ type ConfigResult = {
     SCALPEL_JOURNAL_ENABLED?: string;
     SCALPEL_JOURNAL_PATH?: string;
     SCALPEL_DURABILITY?: string;
+    SCALPEL_TRANSACTION_DIR?: string;
     pathDelimiter: string;
   };
 };
@@ -40,6 +42,9 @@ export function configTool(config: ScalpelConfig): DomainResult<ConfigResult> {
   if (process.env.SCALPEL_DURABILITY !== undefined) {
     env.SCALPEL_DURABILITY = process.env.SCALPEL_DURABILITY;
   }
+  if (process.env.SCALPEL_TRANSACTION_DIR !== undefined) {
+    env.SCALPEL_TRANSACTION_DIR = process.env.SCALPEL_TRANSACTION_DIR;
+  }
 
   const result: ConfigResult = {
     roots: config.roots,
@@ -48,6 +53,7 @@ export function configTool(config: ScalpelConfig): DomainResult<ConfigResult> {
     maxDiffBytes: config.maxDiffBytes,
     maxGrepResults: config.maxGrepResults,
     durability: config.durability,
+    transactionDir: config.transactionDir,
     journalEnabled: config.journalEnabled,
     logLevel: config.logLevel,
     cwd: process.cwd(),

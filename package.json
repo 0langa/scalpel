@@ -1,8 +1,16 @@
 {
   "name": "scalpel",
-  "version": "0.1.0",
+  "version": "1.0.0-alpha.1",
   "description": "Precise, atomic file editing for code and text over MCP.",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/0langa/scalpel.git"
+  },
+  "bugs": {
+    "url": "https://github.com/0langa/scalpel/issues"
+  },
+  "homepage": "https://github.com/0langa/scalpel#readme",
   "type": "module",
   "main": "./dist/index.js",
   "bin": {
@@ -16,6 +24,7 @@
     "dist",
     "docs",
     "README.md",
+    "CHANGELOG.md",
     "AGENTS.md",
     "LICENSE"
   ],

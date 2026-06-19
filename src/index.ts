@@ -4,13 +4,17 @@ import { delimiter } from "node:path";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 
 import { createConfig } from "./core/config.js";
+import { recoverWriteTransactions } from "./core/write-transaction.js";
 import { createScalpelServer } from "./mcp/server.js";
 
 async function main(): Promise<void> {
   const configInput = {
     roots: loadRoots(),
     journalEnabled: process.env.SCALPEL_JOURNAL_ENABLED === "1" || process.env.SCALPEL_JOURNAL_ENABLED === "true",
-    durability: process.env.SCALPEL_DURABILITY === "strict" ? "strict" as const : "default" as const
+    durability: process.env.SCALPEL_DURABILITY === "strict" ? "strict" as const : "default" as const,
+    ...(process.env.SCALPEL_TRANSACTION_DIR === undefined
+      ? {}
+      : { transactionDir: process.env.SCALPEL_TRANSACTION_DIR })
   };
 
   const config = createConfig(
@@ -18,6 +22,8 @@ async function main(): Promise<void> {
       ? configInput
       : { ...configInput, journalPath: process.env.SCALPEL_JOURNAL_PATH }
   );
+
+  await recoverWriteTransactions(config.transactionDir);
 
   const server = createScalpelServer(config);
   const transport = new StdioServerTransport();

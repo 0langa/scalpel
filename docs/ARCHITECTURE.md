@@ -88,8 +88,15 @@ Current guarantee:
 
 - best-effort atomic replace on the local filesystem through temp-file write plus rename
 - optional strict content-write durability with temp-file flush and best-effort parent-directory flush
+- metadata-only transaction records for text writes, with startup recovery that
+  cleans interrupted temp files and reconciles renamed writes whose target hash
+  already matches the intended post-write hash
+- metadata-only transaction records for `move`, with startup recovery that
+  accepts completed rename records
 
-This is intentionally a little narrower than a full crash-durability claim.
+This is intentionally narrower than a full crash-durability claim:
+platform-specific persistence semantics still need broader proof, and any future
+filesystem operation types must join the transaction/fault matrix.
 
 ### MCP result shape
 
@@ -111,6 +118,15 @@ SDK note: MCP TypeScript SDK `1.29.0` validates `structuredContent` against each
 ### Operation journal
 
 `src/core/journal.ts` owns optional JSONL operation records. Tool handlers pass metadata only; file content is never logged.
+
+### Write transactions
+
+`src/core/write-transaction.ts` owns metadata-only text-write and move recovery
+records. Text-write records include transaction ID, target path, temp path,
+intended output hash, intended output size, state, and timestamp. Move records
+include transaction ID, source path, destination path, state, and timestamp.
+They do not include file content. `src/index.ts` runs startup recovery for
+`config.transactionDir` before the MCP server accepts calls.
 
 ## Text Operation Semantics
 
@@ -170,6 +186,7 @@ Regression tests now cover:
 - `read_chunk` and large-file errors
 - binary and non-UTF-8 rejection
 - optional operation journal
+- text-write and move transaction cleanup/startup recovery
 - namespaced tool aliases
 - intermediate symlink traversal rejection
 - invalid regex handling in `grep`
@@ -193,7 +210,7 @@ Kimi Code remains a useful external-client smoke path:
 
 The current implementation is production-usable for local testing, but these are still the most likely follow-up areas:
 
-- strengthen or document any remaining durability limits in atomic writes
+- expand persistence proof across supported platforms and filesystems
 - expand Kimi regression coverage as new edge cases are found
 - expand smoke coverage as new edge cases are found
 - design streaming edit paths before attempting large mutation workloads

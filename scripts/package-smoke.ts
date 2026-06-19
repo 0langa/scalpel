@@ -6,6 +6,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
 type PackageJson = {
+  version: string;
   bin?: Record<string, string> | undefined;
 };
 
@@ -16,7 +17,7 @@ async function main(): Promise<void> {
     throw new Error("package.json must expose a scalpel bin entry");
   }
 
-  const binPath = resolve(bin);
+  const binPath = resolve(process.env.SCALPEL_PACKAGE_BIN ?? bin);
   if (!existsSync(binPath)) {
     throw new Error(`${binPath} not found. Run pnpm build before pnpm test:package-smoke.`);
   }
@@ -35,6 +36,13 @@ async function main(): Promise<void> {
 
   try {
     await client.connect(transport);
+
+    const serverVersion = client.getServerVersion();
+    if (serverVersion?.version !== packageJson.version) {
+      throw new Error(
+        `package version ${packageJson.version} does not match server version ${serverVersion?.version ?? "missing"}`,
+      );
+    }
 
     const tools = await client.listTools();
     const toolNames = new Set(tools.tools.map((tool) => tool.name));

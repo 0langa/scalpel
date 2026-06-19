@@ -69,6 +69,7 @@ export function registerTools(server: McpServer, config: ScalpelConfig): void {
         maxDiffBytes: z.number(),
         maxGrepResults: z.number(),
         durability: z.enum(["default", "strict"]),
+        transactionDir: z.string(),
         journalEnabled: z.boolean(),
         journalPath: z.string().optional(),
         logLevel: z.enum(["silent", "error", "info", "debug"]),
@@ -78,6 +79,7 @@ export function registerTools(server: McpServer, config: ScalpelConfig): void {
           SCALPEL_JOURNAL_ENABLED: z.string().optional(),
           SCALPEL_JOURNAL_PATH: z.string().optional(),
           SCALPEL_DURABILITY: z.string().optional(),
+          SCALPEL_TRANSACTION_DIR: z.string().optional(),
           pathDelimiter: z.string()
         })
       })),

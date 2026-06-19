@@ -1,11 +1,13 @@
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { join, resolve } from "node:path";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+
+import { beginMoveTransaction, beginWriteTransaction } from "../src/core/write-transaction.js";
 
 type Command = "setup" | "corpus" | "race" | "crash" | "all";
 type Severity = "required" | "advisory";
@@ -21,6 +23,8 @@ type Check = {
   passed: boolean;
   detail?: string;
   duration_ms?: number;
+  rss_before_bytes?: number;
+  rss_after_bytes?: number;
 };
 
 type ToolCall = {
@@ -32,14 +36,21 @@ type ToolResult = Awaited<ReturnType<Client["callTool"]>>;
 
 type Report = {
   started_at: string;
+  ended_at?: string;
   root: string;
   report_dir: string;
   scalpel_commit?: string;
+  telemetry?: {
+    duration_ms: number;
+    peak_rss_bytes: number;
+    final_rss_bytes: number;
+  };
   corpora: {
     name: string;
     url: string;
     path: string;
     commit?: string;
+    tracked_file_count?: number;
   }[];
   checks: Check[];
 };
@@ -53,6 +64,7 @@ const expandedCorpora: Corpus[] = [
   ...starterCorpora,
   { name: "typescript", url: "https://github.com/microsoft/TypeScript.git" },
   { name: "kubernetes", url: "https://github.com/kubernetes/kubernetes.git" },
+  { name: "llvm-project", url: "https://github.com/llvm/llvm-project.git" },
 ];
 
 const command = parseCommand(process.argv[2]);
@@ -65,8 +77,15 @@ const corpora = hasArg("--expanded") ? expandedCorpora : starterCorpora;
 const reportStamp = new Date().toISOString().replace(/[:.]/g, "-");
 const reportDir = resolve(hardeningRoot, "reports", reportStamp);
 const checks: Check[] = [];
+let peakRssBytes = process.memoryUsage().rss;
 
 async function main(): Promise<void> {
+  const suiteStart = performance.now();
+  const sampler = setInterval(() => {
+    peakRssBytes = Math.max(peakRssBytes, process.memoryUsage().rss);
+  }, 100);
+  sampler.unref();
+
   await mkdir(reportDir, { recursive: true });
 
   const scalpelCommit = await gitMaybe(["rev-parse", "HEAD"], process.cwd());
@@ -97,6 +116,14 @@ async function main(): Promise<void> {
     await runCrashSuite();
   }
 
+  clearInterval(sampler);
+  report.ended_at = new Date().toISOString();
+  report.telemetry = {
+    duration_ms: Math.round(performance.now() - suiteStart),
+    peak_rss_bytes: peakRssBytes,
+    final_rss_bytes: process.memoryUsage().rss,
+  };
+
   await writeReport(report);
   const requiredFailures = checks.filter((check) => check.severity === "required" && !check.passed);
   if (requiredFailures.length > 0) {
@@ -119,16 +146,23 @@ async function setupCorpora(): Promise<Report["corpora"]> {
       await timedCheck(`clone ${corpus.name}`, "required", async () => {
         await run("git", ["clone", "--depth", "1", corpus.url, target], process.cwd());
       });
+    } else if (!(await isCorpusFixtureUsable(target))) {
+      await timedCheck(`refresh ${corpus.name}`, "required", async () => {
+        await rm(target, { recursive: true, force: true });
+        await run("git", ["clone", "--depth", "1", corpus.url, target], process.cwd());
+      });
     } else {
       check(`clone ${corpus.name}`, "required", true, "already present");
     }
 
     const commit = await gitMaybe(["rev-parse", "HEAD"], target);
+    const trackedFileCount = await gitTrackedFileCount(target);
     results.push({
       name: corpus.name,
       url: corpus.url,
       path: target,
       ...(commit !== undefined ? { commit } : {}),
+      ...(trackedFileCount !== undefined ? { tracked_file_count: trackedFileCount } : {}),
     });
   }
 
@@ -150,11 +184,13 @@ async function describeCorpora(): Promise<Report["corpora"]> {
       continue;
     }
     const commit = await gitMaybe(["rev-parse", "HEAD"], target);
+    const trackedFileCount = await gitTrackedFileCount(target);
     results.push({
       name: corpus.name,
       url: corpus.url,
       path: target,
       ...(commit !== undefined ? { commit } : {}),
+      ...(trackedFileCount !== undefined ? { tracked_file_count: trackedFileCount } : {}),
     });
   }
   return results;
@@ -165,6 +201,8 @@ async function runCorpusSuite(corpusReports: Report["corpora"]): Promise<void> {
     if (!existsSync(corpus.path)) {
       continue;
     }
+
+    const fixtureBefore = await describeGitFixture(corpus.path);
 
     await withScalpelClient(corpus.path, `corpus-${corpus.name}`, async (client) => {
       await timedCheck(`${corpus.name}: list tools`, "required", async () => {
@@ -225,6 +263,96 @@ async function runCorpusSuite(corpusReports: Report["corpora"]): Promise<void> {
         );
       });
     });
+
+    await timedCheck(`${corpus.name}: fixture unchanged after read-only lane`, "required", async () => {
+      await assertGitFixtureUnchanged(corpus.path, fixtureBefore);
+    });
+
+    await timedCheck(`${corpus.name}: disposable mutation copy`, "required", async () => {
+      await runDisposableCorpusMutation(corpus);
+      await assertGitFixtureUnchanged(corpus.path, fixtureBefore);
+    });
+  }
+}
+
+type GitFixtureState = {
+  commit?: string | undefined;
+  status: string;
+};
+
+async function describeGitFixture(path: string): Promise<GitFixtureState> {
+  return {
+    commit: await gitMaybe(["rev-parse", "HEAD"], path),
+    status: await gitMaybe(["status", "--porcelain"], path) ?? "",
+  };
+}
+
+async function assertGitFixtureUnchanged(path: string, before: GitFixtureState): Promise<void> {
+  const after = await describeGitFixture(path);
+  assert(after.commit === before.commit, "fixture commit changed");
+  assert(after.status === before.status, "fixture working tree status changed");
+}
+
+async function runDisposableCorpusMutation(corpus: Report["corpora"][number]): Promise<void> {
+  const copyRoot = join(hardeningRoot, "mutation-copies", reportStamp, corpus.name);
+  await rm(copyRoot, { recursive: true, force: true });
+  await mkdir(join(hardeningRoot, "mutation-copies", reportStamp), { recursive: true });
+  try {
+    await run("git", ["clone", "--shared", corpus.path, copyRoot], process.cwd());
+
+    const mutationPath = ".scalpel-hardening-mutation.txt";
+    await withScalpelClient(copyRoot, `corpus-mutation-${corpus.name}`, async (client) => {
+      const created = await client.callTool({
+        name: "create",
+        arguments: {
+          path: mutationPath,
+          content: `corpus=${corpus.name}\nphase=create\n`,
+        },
+      });
+      assert(created.isError !== true, "create failed in disposable corpus copy");
+
+      const appended = await client.callTool({
+        name: "append",
+        arguments: {
+          path: mutationPath,
+          content: "phase=append\n",
+        },
+      });
+      assert(appended.isError !== true, "append failed in disposable corpus copy");
+
+      const patched = await client.callTool({
+        name: "patch",
+        arguments: {
+          path: mutationPath,
+          old_string: "phase=create",
+          new_string: "phase=patch",
+        },
+      });
+      assert(patched.isError !== true, "patch failed in disposable corpus copy");
+
+      const moved = await client.callTool({
+        name: "move",
+        arguments: {
+          source: mutationPath,
+          destination: ".scalpel-hardening-mutation-moved.txt",
+        },
+      });
+      assert(moved.isError !== true, "move failed in disposable corpus copy");
+
+      const read = await client.callTool({
+        name: "read",
+        arguments: { path: ".scalpel-hardening-mutation-moved.txt" },
+      });
+      assert(read.isError !== true, "read failed after disposable copy mutation");
+    });
+
+    const content = await readFile(join(copyRoot, ".scalpel-hardening-mutation-moved.txt"), "utf8");
+    assert(content.includes("phase=patch"), "disposable mutation copy did not contain patch result");
+    assert(content.includes("phase=append"), "disposable mutation copy did not contain append result");
+  } finally {
+    if (!hasArg("--retain-copies")) {
+      await rm(copyRoot, { recursive: true, force: true });
+    }
   }
 }
 
@@ -1039,6 +1167,111 @@ async function runCrashSuite(): Promise<void> {
     },
   );
 
+  await timedCheck("crash: startup recovery cleans interrupted transaction", "required", async () => {
+    const recoveryRoot = await freshSyntheticRoot("crash-recovery");
+    const transactionDir = join(recoveryRoot, ".scalpel-transactions");
+    const relativePath = "recover-me.txt";
+    const targetPath = join(recoveryRoot, relativePath);
+    const tempPath = join(recoveryRoot, ".scalpel-interrupted.tmp");
+    await writeFile(targetPath, "before\n", "utf8");
+    await writeFile(tempPath, "after\n", "utf8");
+    const transaction = await beginWriteTransaction({
+      transactionDir,
+      targetPath,
+      tempPath,
+      content: "after\n",
+    });
+    await transaction.markTempWritten();
+
+    await withScalpelClient(recoveryRoot, "crash-startup-recovery", async (recoveryClient) => {
+      const result = await recoveryClient.callTool({
+        name: "read",
+        arguments: { path: relativePath },
+      });
+      assert(result.isError !== true, "read failed after startup recovery");
+    });
+
+    const names = await readdir(recoveryRoot);
+    assert(!names.includes(".scalpel-interrupted.tmp"), "startup recovery left temp file");
+    const transactionNames = await readdir(transactionDir);
+    assert(
+      transactionNames.length === 0,
+      `startup recovery left transaction records: ${transactionNames.join(", ")}`,
+    );
+  });
+
+  await timedCheck("crash: startup recovery accepts completed move transaction", "required", async () => {
+    const recoveryRoot = await freshSyntheticRoot("crash-move-recovery");
+    const transactionDir = join(recoveryRoot, ".scalpel-transactions");
+    const sourcePath = join(recoveryRoot, "move-source.txt");
+    const destinationPath = join(recoveryRoot, "move-destination.txt");
+    await writeFile(sourcePath, "moved\n", "utf8");
+    const transaction = await beginMoveTransaction({
+      transactionDir,
+      sourcePath,
+      destinationPath,
+    });
+    await rename(sourcePath, destinationPath);
+    await transaction.markRenamed();
+
+    await withScalpelClient(recoveryRoot, "crash-move-startup-recovery", async (recoveryClient) => {
+      const result = await recoveryClient.callTool({
+        name: "read",
+        arguments: { path: "move-destination.txt" },
+      });
+      assert(result.isError !== true, "read failed after move startup recovery");
+    });
+
+    const transactionNames = await readdir(transactionDir);
+    assert(
+      transactionNames.length === 0,
+      `move startup recovery left transaction records: ${transactionNames.join(", ")}`,
+    );
+  });
+
+  for (const faultPoint of [
+    "text_write.after_transaction_start",
+    "text_write.after_temp_written",
+    "text_write.after_rename",
+    "text_write.after_parent_flush",
+  ]) {
+    await timedCheck(`crash: killed text write at ${faultPoint} recovers`, "required", async () => {
+      await verifyTextWriteFaultRecovery(faultPoint);
+    });
+  }
+
+  for (const faultPoint of [
+    "move.after_transaction_start",
+    "move.after_rename",
+    "move.after_mark_renamed",
+    "move.after_journal",
+  ]) {
+    await timedCheck(`crash: killed move at ${faultPoint} recovers`, "required", async () => {
+      await verifyMoveFaultRecovery(faultPoint);
+    });
+  }
+
+  await timedCheck("crash: recovery cleanup crash is retried", "required", async () => {
+    const recoveryRoot = await freshSyntheticRoot("crash-recovery-cleanup");
+    const transactionDir = join(recoveryRoot, ".scalpel-transactions");
+    const targetPath = join(recoveryRoot, "cleanup-retry.txt");
+    const tempPath = join(recoveryRoot, ".scalpel-cleanup-retry.tmp");
+    await writeFile(targetPath, "before\n", "utf8");
+    await writeFile(tempPath, "after\n", "utf8");
+    const transaction = await beginWriteTransaction({
+      transactionDir,
+      targetPath,
+      tempPath,
+      content: "after\n",
+    });
+    await transaction.markTempWritten();
+
+    await launchServerExpectingCrash(recoveryRoot, "recovery.before_record_cleanup");
+    await recoverByStartingServer(recoveryRoot, "crash-recovery-cleanup-retry", "cleanup-retry.txt");
+    await assertNoTransactionRecords(transactionDir);
+    await assertNoScalpelTemps(recoveryRoot);
+  });
+
   await timedCheck("crash: stale path lock is recovered", "required", async () => {
     const lockDir = join(reportDir, "locks");
     const relativePath = "stale-lock.txt";
@@ -1057,6 +1290,132 @@ async function runCrashSuite(): Promise<void> {
     const names = await readdir(lockDir);
     assert(names.length === 0, `stale lock directory was not cleaned: ${names.join(", ")}`);
   });
+}
+
+async function verifyTextWriteFaultRecovery(faultPoint: string): Promise<void> {
+  const root = await freshSyntheticRoot(`crash-text-${sanitizeName(faultPoint)}`);
+  const transactionDir = join(root, ".scalpel-transactions");
+  const relativePath = "fault-write.txt";
+  const absolutePath = join(root, relativePath);
+  const before = "before\n";
+  const after = "after\n";
+  await writeFile(absolutePath, before, "utf8");
+
+  await callToolExpectingCrash(root, faultPoint, {
+    name: "patch",
+    arguments: {
+      path: relativePath,
+      old_string: "before",
+      new_string: "after",
+    },
+  });
+
+  await recoverByStartingServer(root, `recover-${sanitizeName(faultPoint)}`, relativePath);
+  await assertAbsentOrContent(absolutePath, before, after);
+  await assertNoTransactionRecords(transactionDir);
+  await assertNoScalpelTemps(root);
+}
+
+async function verifyMoveFaultRecovery(faultPoint: string): Promise<void> {
+  const root = await freshSyntheticRoot(`crash-move-${sanitizeName(faultPoint)}`);
+  const transactionDir = join(root, ".scalpel-transactions");
+  const sourceRelative = "move-source.txt";
+  const destinationRelative = "move-destination.txt";
+  const sourcePath = join(root, sourceRelative);
+  const destinationPath = join(root, destinationRelative);
+  await writeFile(sourcePath, "move me\n", "utf8");
+
+  await callToolExpectingCrash(root, faultPoint, {
+    name: "move",
+    arguments: {
+      source: sourceRelative,
+      destination: destinationRelative,
+    },
+  });
+
+  await recoverByStartingServer(root, `recover-${sanitizeName(faultPoint)}`, ".");
+  assert(
+    existsSync(sourcePath) !== existsSync(destinationPath),
+    "move recovery left neither or both source and destination",
+  );
+  await assertNoTransactionRecords(transactionDir);
+}
+
+async function callToolExpectingCrash(
+  root: string,
+  faultPoint: string,
+  call: ToolCall,
+): Promise<void> {
+  const transport = createScalpelTransport(root, join(reportDir, `${sanitizeName(faultPoint)}.jsonl`), {
+    SCALPEL_FAULT_POINT: faultPoint,
+    SCALPEL_LOCK_DIR: join(reportDir, "fault-locks", sanitizeName(faultPoint)),
+  });
+  const client = new Client({
+    name: `scalpel-hardening-fault-${sanitizeName(faultPoint)}`,
+    version: "0.1.0",
+  });
+
+  try {
+    await client.connect(transport);
+    let crashed = false;
+    await client.callTool(call).catch(() => {
+      crashed = true;
+      return undefined;
+    });
+    await delay(250);
+    assert(crashed, `fault point ${faultPoint} did not crash the tool call`);
+  } finally {
+    await Promise.allSettled([client.close(), transport.close()]);
+  }
+}
+
+async function launchServerExpectingCrash(root: string, faultPoint: string): Promise<void> {
+  const transport = createScalpelTransport(root, join(reportDir, `${sanitizeName(faultPoint)}.jsonl`), {
+    SCALPEL_FAULT_POINT: faultPoint,
+  });
+  const client = new Client({
+    name: `scalpel-hardening-fault-${sanitizeName(faultPoint)}`,
+    version: "0.1.0",
+  });
+  const result = await Promise.race([
+    client.connect(transport).then(() => "connected" as const).catch(() => "crashed" as const),
+    delay(1000).then(() => "timeout" as const),
+  ]);
+  await Promise.allSettled([client.close(), transport.close()]);
+  assert(result !== "connected", `fault point ${faultPoint} did not crash during startup`);
+}
+
+async function recoverByStartingServer(root: string, label: string, readPath: string): Promise<void> {
+  await withScalpelClient(root, label, async (client) => {
+    const result = await client.callTool({
+      name: readPath === "." ? "list_dir" : "read",
+      arguments: { path: readPath },
+    });
+    assert(result.isError !== true, "recovery server returned an error");
+  });
+}
+
+async function assertAbsentOrContent(path: string, before: string, after: string): Promise<void> {
+  if (!existsSync(path)) {
+    return;
+  }
+  const content = await readFile(path, "utf8");
+  assert(
+    content === before || content === after,
+    `unexpected recovered content ${JSON.stringify(content)}`,
+  );
+}
+
+async function assertNoTransactionRecords(transactionDir: string): Promise<void> {
+  const names = existsSync(transactionDir) ? await readdir(transactionDir) : [];
+  const records = names.filter((name) => name.endsWith(".json"));
+  assert(records.length === 0, `leftover transaction records: ${records.join(", ")}`);
+}
+
+async function assertNoScalpelTemps(root: string): Promise<void> {
+  const names = await readdir(root);
+  const leftovers = names.filter((name) => name.startsWith(".scalpel-") && name.endsWith(".tmp"));
+  assert(leftovers.length === 0, `leftover scalpel temp files: ${leftovers.join(", ")}`);
 }
 
 async function withScalpelClient<T>(
@@ -1101,7 +1460,11 @@ async function withScalpelClients<T>(
   }
 }
 
-function createScalpelTransport(root: string, journalPath: string): StdioClientTransport {
+function createScalpelTransport(
+  root: string,
+  journalPath: string,
+  envOverrides: Record<string, string> = {},
+): StdioClientTransport {
   const transport = new StdioClientTransport({
     command: "node",
     args: [serverPath()],
@@ -1114,6 +1477,7 @@ function createScalpelTransport(root: string, journalPath: string): StdioClientT
       SCALPEL_DURABILITY: "strict",
       SCALPEL_LOCK_DIR: join(reportDir, "locks"),
       SCALPEL_LOCK_STALE_MS: process.env.SCALPEL_LOCK_STALE_MS ?? "300000",
+      ...envOverrides,
     },
     stderr: "pipe",
   });
@@ -1196,11 +1560,12 @@ async function timedCheck(
   runCheck: () => Promise<void>,
 ): Promise<void> {
   const start = performance.now();
+  const rssBefore = process.memoryUsage().rss;
   try {
     await runCheck();
-    check(name, severity, true, undefined, performance.now() - start);
+    check(name, severity, true, undefined, performance.now() - start, rssBefore);
   } catch (error) {
-    check(name, severity, false, errorMessage(error), performance.now() - start);
+    check(name, severity, false, errorMessage(error), performance.now() - start, rssBefore);
   }
 }
 
@@ -1210,13 +1575,18 @@ function check(
   passed: boolean,
   detail?: string,
   durationMs?: number,
+  rssBeforeBytes?: number,
 ): void {
+  const rssAfterBytes = process.memoryUsage().rss;
+  peakRssBytes = Math.max(peakRssBytes, rssAfterBytes);
   checks.push({
     name,
     severity,
     passed,
     ...(detail !== undefined ? { detail } : {}),
     ...(durationMs !== undefined ? { duration_ms: Math.round(durationMs) } : {}),
+    ...(rssBeforeBytes !== undefined ? { rss_before_bytes: rssBeforeBytes } : {}),
+    rss_after_bytes: rssAfterBytes,
   });
 }
 
@@ -1243,20 +1613,38 @@ function renderMarkdown(report: Report): string {
     `Scalpel commit: ${report.scalpel_commit ?? "unknown"}`,
     `Required checks: ${String(requiredPassed)}/${String(required.length)} passed`,
     `Advisory checks: ${String(advisoryPassed)}/${String(advisory.length)} passed`,
+    ...(report.telemetry === undefined
+      ? []
+      : [
+          `Duration: ${String(report.telemetry.duration_ms)} ms`,
+          `Peak RSS: ${String(report.telemetry.peak_rss_bytes)} bytes`,
+          `Final RSS: ${String(report.telemetry.final_rss_bytes)} bytes`,
+        ]),
     "",
     "## Corpora",
     "",
   ];
 
   for (const corpus of report.corpora) {
-    lines.push(`- ${corpus.name}: ${corpus.commit ?? "unknown"} (${corpus.path})`);
+    const fileCount = corpus.tracked_file_count === undefined
+      ? ""
+      : `, ${String(corpus.tracked_file_count)} tracked files`;
+    lines.push(`- ${corpus.name}: ${corpus.commit ?? "unknown"}${fileCount} (${corpus.path})`);
   }
 
   lines.push("", "## Checks", "");
   for (const [index, item] of report.checks.entries()) {
     const status = item.passed ? "PASS" : "FAIL";
     const detail = item.detail === undefined ? "" : `: ${item.detail}`;
-    lines.push(`- ${String(index + 1)}. ${status} [${item.severity}] ${item.name}${detail}`);
+    const duration = item.duration_ms === undefined ? "" : ` (${String(item.duration_ms)} ms`;
+    const rss =
+      item.rss_before_bytes === undefined || item.rss_after_bytes === undefined
+        ? ""
+        : `${duration === "" ? " (" : ", "}rss ${String(item.rss_before_bytes)} -> ${String(item.rss_after_bytes)} bytes`;
+    const telemetry = duration === "" && rss === "" ? "" : `${duration}${rss})`;
+    lines.push(
+      `- ${String(index + 1)}. ${status} [${item.severity}] ${item.name}${telemetry}${detail}`,
+    );
   }
 
   return `${lines.join("\n")}\n`;
@@ -1271,13 +1659,18 @@ function serverPath(): string {
 }
 
 async function run(commandName: string, args: string[], cwd: string): Promise<string> {
-  const child = spawn(commandName, args, { cwd, stdio: ["ignore", "pipe", "pipe"] });
+  const actualArgs = commandName === "git" ? ["-c", "core.longpaths=true", ...args] : args;
+  const child = spawn(commandName, actualArgs, { cwd, stdio: ["ignore", "pipe", "pipe"] });
   const stdout: Buffer[] = [];
   const stderr: Buffer[] = [];
   child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
   child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
 
   const code = await new Promise<number | null>((resolveExit) => {
+    child.on("error", (error) => {
+      stderr.push(Buffer.from(error.message));
+      resolveExit(-1);
+    });
     child.on("close", resolveExit);
   });
 
@@ -1296,6 +1689,32 @@ async function gitMaybe(args: string[], cwd: string): Promise<string | undefined
   } catch {
     return undefined;
   }
+}
+
+async function gitTrackedFileCount(cwd: string): Promise<number | undefined> {
+  const output = await gitMaybe(["ls-files"], cwd);
+  if (output === undefined) {
+    return undefined;
+  }
+  if (output.length === 0) {
+    return 0;
+  }
+  return output.split("\n").length;
+}
+
+async function isCorpusFixtureUsable(cwd: string): Promise<boolean> {
+  const commit = await gitMaybe(["rev-parse", "HEAD"], cwd);
+  if (commit === undefined) {
+    return false;
+  }
+
+  const trackedFileCount = await gitTrackedFileCount(cwd);
+  if (trackedFileCount === undefined || trackedFileCount === 0) {
+    return false;
+  }
+
+  const status = await gitMaybe(["status", "--porcelain"], cwd);
+  return status?.trim().length === 0;
 }
 
 function parseCommand(value: string | undefined): Command {
@@ -1389,6 +1808,10 @@ function rootsFromStructuredContent(structuredContent: unknown): string[] {
 
 function hashKey(key: string): string {
   return createHash("sha256").update(key).digest("hex");
+}
+
+function sanitizeName(value: string): string {
+  return value.replace(/[^a-zA-Z0-9_-]+/g, "-");
 }
 
 function errorMessage(error: unknown): string {

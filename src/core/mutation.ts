@@ -23,6 +23,7 @@ export type MutationWriteInput = {
   before: FileSnapshot | undefined;
   maxReadBytes?: number | undefined;
   durability?: "default" | "strict" | undefined;
+  transactionDir?: string | undefined;
 };
 
 export async function readSnapshotForMutation(
@@ -149,6 +150,7 @@ export async function writeTextFileForMutation(
 
   const warnings = await writeFileAtomic(input.path, input.content, {
     ...(input.durability !== undefined ? { durability: input.durability } : {}),
+    ...(input.transactionDir !== undefined ? { transactionDir: input.transactionDir } : {}),
   });
   await runHardeningInterference(input.path, "AFTER_COMMIT");
 

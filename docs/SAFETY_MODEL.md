@@ -89,10 +89,16 @@ This gives best-effort local filesystem replacement atomicity.
 
 When `SCALPEL_DURABILITY=strict` is set, content writes also flush the temp file before rename and attempt to flush the parent directory after rename. Parent-directory flush support is platform-dependent, especially on Windows. Unsupported parent flushes are reported as non-fatal warnings.
 
+Text writes and `move` also create metadata-only transaction records under
+`config.transactionDir`. On startup, Scalpel scans those records before serving
+MCP calls. Recovery removes leftover temp files for interrupted writes, clears
+records for renamed writes whose target content already matches the intended
+post-write hash, and accepts completed move records. Transaction records include
+paths, hashes, sizes, and state where relevant, but never file content.
+
 Not guaranteed today:
 
-- crash recovery
-- temp-file cleanup after interrupted writes
+- cross-platform persistence guarantees for every filesystem and power-loss scenario
 - guaranteed parent-directory `fsync` on every platform
 - protection against all race windows between validation and rename
 - cross-device move semantics
@@ -108,7 +114,8 @@ Not guaranteed today:
 | Binary files | Text tools detect and reject binary/non-UTF-8 files; binary editing is unsupported | Prevents corruption but does not provide byte-edit workflows |
 | Search traversal | Sequential recursive traversal | Slow for large trees |
 | Native acceleration | None | Future performance targets require new layer |
-| Audit logging | Optional metadata-only JSONL operation journal | Helps eval and rollback reasoning, but is not a transactional recovery log |
+| Audit logging | Optional metadata-only JSONL operation journal | Helps eval and rollback reasoning; crash recovery uses separate metadata-only transaction records |
+| Recovery | Startup recovery cleans interrupted text-write records, accepts completed move records, and the hardening crash lane injects killed-process failures around text writes, moves, and recovery cleanup | Platform-specific crash persistence still needs proof |
 | Permission model | Root confinement only | No per-tool, per-path, or risk-tier policy |
 | Parser awareness | No AST/structured formats | Small edits can still damage code/config semantics |
 
