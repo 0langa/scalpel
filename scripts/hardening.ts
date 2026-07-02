@@ -273,6 +273,8 @@ async function describeCorpora(): Promise<Report["corpora"]> {
 }
 
 async function runCorpusSuite(corpusReports: Report["corpora"]): Promise<void> {
+  await runLargeStreamingMutationSuite();
+
   for (const corpus of corpusReports) {
     if (!existsSync(corpus.path)) {
       continue;
@@ -349,6 +351,36 @@ async function runCorpusSuite(corpusReports: Report["corpora"]): Promise<void> {
       await assertGitFixtureUnchanged(corpus.path, fixtureBefore);
     });
   }
+}
+
+async function runLargeStreamingMutationSuite(): Promise<void> {
+  await timedCheck("large streaming: append and prepend oversized UTF-8 files", "required", async () => {
+    const root = await freshSyntheticRoot("large-streaming");
+    const baseContent = "0123456789abcdef\n".repeat(150_000);
+    const appendPath = join(root, "append-large.txt");
+    const prependPath = join(root, "prepend-large.txt");
+    await writeFile(appendPath, baseContent, "utf8");
+    await writeFile(prependPath, baseContent, "utf8");
+
+    await withScalpelClient(root, "large-streaming", async (client) => {
+      const appended = await client.callTool({
+        name: "append",
+        arguments: { path: "append-large.txt", content: "tail\n" },
+      });
+      assert(appended.isError !== true, "large append failed");
+
+      const prepended = await client.callTool({
+        name: "prepend",
+        arguments: { path: "prepend-large.txt", content: "head\n" },
+      });
+      assert(prepended.isError !== true, "large prepend failed");
+    });
+
+    const appendedContent = await readFile(appendPath, "utf8");
+    const prependedContent = await readFile(prependPath, "utf8");
+    assert(appendedContent === `${baseContent}tail\n`, "large append content mismatch");
+    assert(prependedContent === `head\n${baseContent}`, "large prepend content mismatch");
+  });
 }
 
 type GitFixtureState = {
