@@ -589,20 +589,31 @@ describe("mutation and search tools", () => {
     });
   });
 
-  test("append streams large existing UTF-8 files", async () => {
+  test("append and prepend stream large existing UTF-8 files", async () => {
     await withTempDir(async (root) => {
-      await writeFile(join(root, "large.txt"), "0123456789\n", "utf8");
+      await writeFile(join(root, "append-large.txt"), "0123456789\n", "utf8");
+      await writeFile(join(root, "prepend-large.txt"), "0123456789\n", "utf8");
 
       const config = createConfig({ roots: [root], maxReadBytes: 5 });
-      const result = await appendTool({ path: "large.txt", content: "more\n" }, config);
+      const append = await appendTool({ path: "append-large.txt", content: "more\n" }, config);
+      const prepend = await prependTool({ path: "prepend-large.txt", content: "more\n" }, config);
 
-      expect(result.ok).toBe(true);
-      if (result.ok) {
-        expect(result.data.applied).toBe(true);
-        expect(result.data.diff).toBeUndefined();
-        expect(result.data.new_total_lines).toBe(2);
+      expect(append.ok).toBe(true);
+      expect(prepend.ok).toBe(true);
+      if (append.ok && prepend.ok) {
+        expect(append.data.applied).toBe(true);
+        expect(prepend.data.applied).toBe(true);
+        expect(append.data.diff).toBeUndefined();
+        expect(prepend.data.diff).toBeUndefined();
+        expect(append.data.new_total_lines).toBe(2);
+        expect(prepend.data.new_total_lines).toBe(2);
       }
-      await expect(readFile(join(root, "large.txt"), "utf8")).resolves.toBe("0123456789\nmore\n");
+      await expect(readFile(join(root, "append-large.txt"), "utf8")).resolves.toBe(
+        "0123456789\nmore\n",
+      );
+      await expect(readFile(join(root, "prepend-large.txt"), "utf8")).resolves.toBe(
+        "more\n0123456789\n",
+      );
     });
   });
 

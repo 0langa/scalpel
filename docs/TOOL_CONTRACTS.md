@@ -116,7 +116,7 @@ Resources are informational only and do not mutate workspace files.
 
 ## Mutating Tools
 
-Most full-text mutators reject oversized, binary, or invalid UTF-8 existing files before mutation. Oversized unsupported files fail with `FILE_TOO_LARGE`; binary and non-UTF-8 files fail with explicit encoding errors. `append` supports a streaming path for oversized existing UTF-8 files and omits unified diff output for that path.
+Most full-text mutators reject oversized, binary, or invalid UTF-8 existing files before mutation. Oversized unsupported files fail with `FILE_TOO_LARGE`; binary and non-UTF-8 files fail with explicit encoding errors. `append` and `prepend` support streaming paths for oversized existing UTF-8 files and omit unified diff output for those paths.
 
 ### `create`
 
@@ -193,6 +193,8 @@ Prepends content to a file.
 - supports `dry_run`, `expected_sha256`, and `expected_mtime_ms`
 - fails if expectations are supplied for a missing file
 - rewrites existing files through atomic replacement
+- streams oversized existing UTF-8 files without loading full content into memory
+- omits `diff` for the oversized streaming path
 
 ### `move`
 

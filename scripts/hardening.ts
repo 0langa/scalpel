@@ -140,7 +140,7 @@ const claimMap: ClaimMapEntry[] = [
     release_blocking: true,
     proof_lanes: ["corpus", "all"],
     evidence: [
-      "oversized UTF-8 append path",
+      "oversized UTF-8 append and prepend paths",
       "broader streaming mutation checks pending",
     ],
   },
