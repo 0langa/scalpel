@@ -27,6 +27,14 @@ type Check = {
   rss_after_bytes?: number;
 };
 
+type ClaimMapEntry = {
+  claim: string;
+  status: "implemented" | "partial" | "planned";
+  release_blocking: boolean;
+  proof_lanes: Command[];
+  evidence: string[];
+};
+
 type ToolCall = {
   name: string;
   arguments: Record<string, unknown>;
@@ -40,6 +48,8 @@ type Report = {
   root: string;
   report_dir: string;
   scalpel_commit?: string;
+  safety_model_version: string;
+  claim_map: ClaimMapEntry[];
   telemetry?: {
     duration_ms: number;
     peak_rss_bytes: number;
@@ -78,6 +88,67 @@ const reportStamp = new Date().toISOString().replace(/[:.]/g, "-");
 const reportDir = resolve(hardeningRoot, "reports", reportStamp);
 const checks: Check[] = [];
 let peakRssBytes = process.memoryUsage().rss;
+const safetyModelVersion = "scalpel-safety-model-v1-draft";
+const claimMap: ClaimMapEntry[] = [
+  {
+    claim: "workspace-confined MCP file operations",
+    status: "implemented",
+    release_blocking: true,
+    proof_lanes: ["corpus", "all"],
+    evidence: [
+      "path escape rejection checks",
+      "config root confinement checks",
+      "symlink path policy tests",
+    ],
+  },
+  {
+    claim: "race-proof supported mutations before success",
+    status: "partial",
+    release_blocking: true,
+    proof_lanes: ["race", "all"],
+    evidence: [
+      "same-SHA concurrent mutator checks",
+      "multi-process lock checks",
+      "external interference checks before commit and before success",
+    ],
+  },
+  {
+    claim: "crash-safe supported mutations with metadata-only recovery",
+    status: "partial",
+    release_blocking: true,
+    proof_lanes: ["crash", "all"],
+    evidence: [
+      "killed-process fault matrix",
+      "startup transaction recovery checks",
+      "recovery cleanup retry checks",
+    ],
+  },
+  {
+    claim: "large-scale repository traversal and bounded operation evidence",
+    status: "partial",
+    release_blocking: true,
+    proof_lanes: ["corpus", "all"],
+    evidence: [
+      "expanded public corpus traversal",
+      "tracked file counts",
+      "RSS and duration telemetry",
+    ],
+  },
+  {
+    claim: "streaming large-file mutation",
+    status: "planned",
+    release_blocking: true,
+    proof_lanes: ["corpus", "all"],
+    evidence: ["synthetic large-file mutation checks pending"],
+  },
+  {
+    claim: "cross-platform persistence evidence",
+    status: "planned",
+    release_blocking: true,
+    proof_lanes: ["crash", "all"],
+    evidence: ["Windows and Unix-like final reports pending"],
+  },
+];
 
 async function main(): Promise<void> {
   const suiteStart = performance.now();
@@ -93,6 +164,8 @@ async function main(): Promise<void> {
     started_at: new Date().toISOString(),
     root: hardeningRoot,
     report_dir: reportDir,
+    safety_model_version: safetyModelVersion,
+    claim_map: claimMap,
     corpora: [],
     checks,
   };
@@ -1611,6 +1684,7 @@ function renderMarkdown(report: Report): string {
     `Root: ${report.root}`,
     `Report: ${report.report_dir}`,
     `Scalpel commit: ${report.scalpel_commit ?? "unknown"}`,
+    `Safety model: ${report.safety_model_version}`,
     `Required checks: ${String(requiredPassed)}/${String(required.length)} passed`,
     `Advisory checks: ${String(advisoryPassed)}/${String(advisory.length)} passed`,
     ...(report.telemetry === undefined
@@ -1621,9 +1695,24 @@ function renderMarkdown(report: Report): string {
           `Final RSS: ${String(report.telemetry.final_rss_bytes)} bytes`,
         ]),
     "",
-    "## Corpora",
+    "## Claim Map",
     "",
   ];
+
+  for (const claim of report.claim_map) {
+    lines.push(
+      `- ${claim.claim}: ${claim.status}; release blocking: ${String(claim.release_blocking)}; lanes: ${claim.proof_lanes.join(", ")}`,
+    );
+    for (const evidence of claim.evidence) {
+      lines.push(`  - ${evidence}`);
+    }
+  }
+
+  lines.push(
+    "",
+    "## Corpora",
+    "",
+  );
 
   for (const corpus of report.corpora) {
     const fileCount = corpus.tracked_file_count === undefined

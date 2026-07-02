@@ -1,6 +1,15 @@
 # Safety Model
 
 This document separates current guarantees from future safety requirements.
+It is the source of truth for what Scalpel may claim in release notes.
+
+## Safety Model Version
+
+Safety model version: `scalpel-safety-model-v1-draft`
+
+Final `1.0.0` release notes must reference this document and must not use broad
+terms such as "crash-safe", "race-proof", or "large-scale" unless the linked
+release evidence proves the specific invariant described here.
 
 ## Current Security Boundary
 
@@ -11,6 +20,91 @@ The server assumes:
 - caller is allowed to modify files inside configured roots
 - process user permissions are the operating-system enforcement layer
 - MCP client may request destructive operations, so tool contracts must fail clearly
+
+## Release Claim Terms
+
+These terms are target requirements for `1.0.0`, not current guarantees unless
+the current guarantees section explicitly says so.
+
+### Crash-Safe
+
+`Crash-safe` means that if the Scalpel server process exits, is killed, or
+crashes at any instrumented point in a mutating operation, startup recovery
+returns every affected path to one of these states before serving MCP calls:
+
+- old complete content/state
+- new complete content/state
+- explicit unrecoverable state with no silent success claim
+
+Crash-safe does not mean protection from arbitrary operating-system, disk,
+controller, or filesystem bugs. Power-loss persistence is included only for the
+platform/filesystem/durability combinations proven by final hardening reports.
+
+### Race-Proof
+
+`Race-proof` means Scalpel does not silently overwrite or misreport concurrent
+changes inside the supported threat model. For supported mutations, the final
+hardening report must prove:
+
+- in-process mutators serialize conflicting path operations
+- cooperative multi-process Scalpel servers serialize conflicting path
+  operations through a shared lock protocol
+- stale hash/mtime expectations are rejected
+- external same-user replacement, deletion, directory replacement, or symlink
+  replacement before commit fails closed
+- external same-user modification after commit but before Scalpel reports
+  success is detected and reported as a conflict
+
+Race-proof does not cover malicious same-user changes after Scalpel has already
+returned success to the client. After success, the file is normal workspace
+state and can be changed by other local processes.
+
+### Large-Scale
+
+`Large-scale` means Scalpel can operate over large repositories and supported
+large text files with bounded memory and explicit output limits. The final
+hardening report must prove:
+
+- large public corpora are traversed from pinned commits
+- generated, vendored, binary, non-UTF-8, hidden, oversized, and unreadable
+  files are counted or skipped with reasons
+- supported large-file mutation paths do not require full-file memory snapshots
+- unsupported large edits fail clearly before mutation
+- reports include duration and peak/final RSS telemetry
+
+### Recoverable
+
+`Recoverable` means a transaction record contains enough metadata to reconcile
+or explicitly classify the operation without file content. Recovery decisions
+must be metadata-only and must not write file contents into journals or reports.
+
+## Supported And Unsupported Environments
+
+Target supported environments for the final `1.0.0` claim:
+
+- local filesystems on Windows proven by the final Windows hardening report
+- at least one Unix-like local filesystem proven by the final Unix-like
+  hardening report
+- Node.js versions allowed by `package.json`
+- `stdio` MCP transport
+- workspace roots configured through `SCALPEL_ROOTS` or the process working
+  directory
+
+Unsupported or not-yet-supported environments unless future evidence expands
+the claim:
+
+- network filesystems and sync folders with non-standard rename/fsync semantics
+- cross-device moves unless explicitly implemented and proven
+- malicious same-user edits after Scalpel reports success
+- kernel, disk, controller, antivirus, or filesystem bugs
+- binary byte-edit workflows
+- parser-aware semantic edits
+- permission revocation during an operation except as fail-closed error
+  handling
+
+If Scalpel detects an unsupported case before mutation, the final behavior
+should be fail-closed with a clear error. If an unsupported case cannot be
+reliably detected, release notes must exclude it from the safety claim.
 
 ## Current Guarantees
 
@@ -100,8 +194,26 @@ Not guaranteed today:
 
 - cross-platform persistence guarantees for every filesystem and power-loss scenario
 - guaranteed parent-directory `fsync` on every platform
-- protection against all race windows between validation and rename
+- protection against malicious same-user changes after success is reported
 - cross-device move semantics
+
+## Target 1.0.0 Requirements
+
+Before `1.0.0`, all release-blocking requirements below must have
+machine-readable evidence:
+
+- `pnpm validate` passes on the final commit.
+- Expanded Windows hardening passes on the final commit.
+- Release-blocking hardening lanes pass on at least one Unix-like filesystem.
+- All release-blocking checks are `required`, not `advisory`.
+- Streaming or bounded large-file mutation exists for supported large edits, or
+  the release claim is narrowed so full-text large-file mutation is not claimed.
+- Cross-device move behavior is finalized as supported, rejected, or explicitly
+  unsupported.
+- Recovery state machine classifies each pending transaction as completed,
+  aborted, recovered, or unrecoverable without silent success.
+- Final release artifacts include hardening reports, checksums, and release
+  notes that link each claim to evidence.
 
 ## Current Risk Register
 

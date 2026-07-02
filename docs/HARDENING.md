@@ -125,6 +125,16 @@ The `1.0.0` release target is a fully crash-safe, race-proof, large-scale
 file-operations MCP platform within an explicit safety model. That claim is only
 allowed when every proof lane below has machine-readable evidence.
 
+Hardening reports must include:
+
+- `safety_model_version`: the safety model version from `docs/SAFETY_MODEL.md`
+- `claim_map`: release claims mapped to proof lanes and current status
+- platform/runtime metadata for final release reports
+- required/advisory status for every check
+
+The report claim map is the release audit index. A final `1.0.0` release must
+not make a claim whose claim-map status is still `planned` or `advisory`.
+
 ### 1. Explicit Safety Model
 
 Required implementation:
@@ -248,6 +258,25 @@ Required proof:
 - `pnpm hardening:all -- --expanded` passes with zero required failures.
 - Crash/race/fault lanes pass on Windows and at least one Unix-like OS.
 - Release notes link the exact hardening report paths and corpus commits.
+
+### 7. GitHub Release Completion
+
+Required implementation:
+
+- Repository contains normal public-product files:
+  `SECURITY.md`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SUPPORT.md`, issue
+  templates, pull request template, CI workflows, and release process docs.
+- CI verifies `pnpm validate` on Windows and Linux.
+- A manual or release workflow builds package assets and uploads hardening
+  reports.
+- Final release notes distinguish guarantees, unsupported cases, and evidence.
+
+Required proof:
+
+- Final commit has green CI.
+- Final package smoke passes from the packed tarball or release asset.
+- GitHub release `v1.0.0` is not draft and not prerelease.
+- Release assets include package tarball, evidence zip, and SHA-256 checksums.
 
 ## Current Highest-Value Gaps
 
