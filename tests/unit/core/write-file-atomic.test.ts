@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import { describe, expect, test } from "vitest";
 
-import { writeFileAtomic } from "../../../src/core/write-file-atomic.js";
+import { writeFileAtomic, writeFileAtomicStream } from "../../../src/core/write-file-atomic.js";
 import {
   beginMoveTransaction,
   beginWriteTransaction,
@@ -45,6 +45,24 @@ describe("writeFileAtomic", () => {
 
       expect(warnings).toEqual([]);
       await expect(readFile(filePath, "utf8")).resolves.toBe("committed\n");
+      await expect(readdir(transactionDir)).resolves.toEqual([]);
+    });
+  });
+
+  test("streamed writes use supplied transaction metadata without buffering content", async () => {
+    await withTempDir(async (root) => {
+      const transactionDir = join(root, ".scalpel-transactions");
+      const filePath = join(root, "streamed.txt");
+      const content = "alpha\nbeta\n";
+
+      const warnings = await writeFileAtomicStream(filePath, ["alpha\n", "beta\n"], {
+        transactionDir,
+        afterSha256: "7ebc23b6a14b4d28fbd1ebd7f418913b1764302f5a78cf2cae886220b3645f5c",
+        afterSizeBytes: Buffer.byteLength(content, "utf8"),
+      });
+
+      expect(warnings).toEqual([]);
+      await expect(readFile(filePath, "utf8")).resolves.toBe(content);
       await expect(readdir(transactionDir)).resolves.toEqual([]);
     });
   });

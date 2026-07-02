@@ -60,9 +60,19 @@ export async function beginWriteTransaction(input: {
   transactionDir: string;
   targetPath: string;
   tempPath: string;
-  content: string;
+  content?: string | undefined;
+  afterSha256?: string | undefined;
+  afterSizeBytes?: number | undefined;
 }): Promise<WriteTransactionHandle> {
   await mkdir(input.transactionDir, { recursive: true });
+  const afterSha256 = input.afterSha256 ?? (input.content === undefined ? undefined : sha256(input.content));
+  const afterSizeBytes = input.afterSizeBytes ?? (
+    input.content === undefined ? undefined : Buffer.byteLength(input.content, "utf8")
+  );
+  if (afterSha256 === undefined || afterSizeBytes === undefined) {
+    throw new Error("write transaction requires content or after metadata");
+  }
+
   const id = randomUUID();
   const recordPath = join(input.transactionDir, `${id}.json`);
   const record: TextWriteTransactionRecord = {
@@ -71,8 +81,8 @@ export async function beginWriteTransaction(input: {
     id,
     targetPath: input.targetPath,
     tempPath: input.tempPath,
-    afterSha256: sha256(input.content),
-    afterSizeBytes: Buffer.byteLength(input.content, "utf8"),
+    afterSha256,
+    afterSizeBytes,
     state: "started",
     updatedAt: new Date().toISOString(),
   };

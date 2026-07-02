@@ -136,10 +136,13 @@ const claimMap: ClaimMapEntry[] = [
   },
   {
     claim: "streaming large-file mutation",
-    status: "planned",
+    status: "partial",
     release_blocking: true,
     proof_lanes: ["corpus", "all"],
-    evidence: ["synthetic large-file mutation checks pending"],
+    evidence: [
+      "oversized UTF-8 append path",
+      "broader streaming mutation checks pending",
+    ],
   },
   {
     claim: "cross-platform persistence evidence",

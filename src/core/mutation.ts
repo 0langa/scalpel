@@ -8,7 +8,7 @@ import {
   type FileSnapshot,
   type FileStat,
 } from "./file-metadata.js";
-import { writeFileAtomic } from "./write-file-atomic.js";
+import { writeFileAtomic, writeFileAtomicStream } from "./write-file-atomic.js";
 
 export type MutationPreconditionInput = {
   path: string;
@@ -21,6 +21,17 @@ export type MutationWriteInput = {
   path: string;
   content: string;
   before: FileSnapshot | undefined;
+  maxReadBytes?: number | undefined;
+  durability?: "default" | "strict" | undefined;
+  transactionDir?: string | undefined;
+};
+
+export type StreamingMutationWriteInput = {
+  path: string;
+  chunks: AsyncIterable<string | Buffer> | Iterable<string | Buffer>;
+  before: FileStat | undefined;
+  afterSha256: string;
+  afterSizeBytes: number;
   maxReadBytes?: number | undefined;
   durability?: "default" | "strict" | undefined;
   transactionDir?: string | undefined;
@@ -162,6 +173,32 @@ export async function writeTextFileForMutation(
   return success({ warnings });
 }
 
+export async function writeTextFileStreamForMutation(
+  input: StreamingMutationWriteInput,
+): Promise<DomainResult<{ warnings: string[] }>> {
+  await runHardeningInterference(input.path, "BEFORE_COMMIT");
+
+  const guard = await validateStreamingCommitGuard(input);
+  if (!guard.ok) {
+    return guard;
+  }
+
+  const warnings = await writeFileAtomicStream(input.path, input.chunks, {
+    afterSha256: input.afterSha256,
+    afterSizeBytes: input.afterSizeBytes,
+    ...(input.durability !== undefined ? { durability: input.durability } : {}),
+    ...(input.transactionDir !== undefined ? { transactionDir: input.transactionDir } : {}),
+  });
+  await runHardeningInterference(input.path, "AFTER_COMMIT");
+
+  const verification = await verifyCommittedStreamContent(input);
+  if (!verification.ok) {
+    return verification;
+  }
+
+  return success({ warnings });
+}
+
 async function validateCommitGuard(input: MutationWriteInput): Promise<DomainResult<undefined>> {
   if (input.before === undefined) {
     const symlinkCheck = await validatePathIsNotSymlink(input.path);
@@ -231,6 +268,70 @@ async function validateCommitGuard(input: MutationWriteInput): Promise<DomainRes
   return success(undefined);
 }
 
+async function validateStreamingCommitGuard(
+  input: StreamingMutationWriteInput,
+): Promise<DomainResult<undefined>> {
+  const symlinkCheck = await validatePathIsNotSymlink(input.path);
+  if (!symlinkCheck.ok) {
+    return symlinkCheck;
+  }
+
+  if (input.before === undefined) {
+    const current = await readPathStat(input.path, { maxBytes: input.maxReadBytes });
+    if (current.ok) {
+      return failure(
+        "CONCURRENCY_CONFLICT",
+        "Path appeared after the mutation plan was built",
+        input.path,
+        {
+          actual_mtime_ms: current.data.mtimeMs,
+          actual_sha256: current.data.sha256,
+        },
+      );
+    }
+
+    if (current.error.code === "FILE_NOT_FOUND") {
+      return success(undefined);
+    }
+
+    return current;
+  }
+
+  const current = await readPathStat(input.path, { maxBytes: input.maxReadBytes });
+  if (!current.ok) {
+    return failure(
+      "CONCURRENCY_CONFLICT",
+      "Path changed or disappeared after the mutation plan was built",
+      input.path,
+      {
+        expected_sha256: input.before.sha256,
+        expected_mtime_ms: input.before.mtimeMs,
+        cause: current.error,
+      },
+    );
+  }
+
+  if (
+    current.data.sha256 !== input.before.sha256 ||
+    current.data.mtimeMs !== input.before.mtimeMs ||
+    current.data.sizeBytes !== input.before.sizeBytes
+  ) {
+    return failure(
+      "CONCURRENCY_CONFLICT",
+      "Path changed after the mutation plan was built",
+      input.path,
+      {
+        expected_sha256: input.before.sha256,
+        actual_sha256: current.data.sha256,
+        expected_mtime_ms: input.before.mtimeMs,
+        actual_mtime_ms: current.data.mtimeMs,
+      },
+    );
+  }
+
+  return success(undefined);
+}
+
 async function verifyCommittedContent(input: MutationWriteInput): Promise<DomainResult<undefined>> {
   const symlinkCheck = await validatePathIsNotSymlink(input.path);
   if (!symlinkCheck.ok) {
@@ -262,6 +363,42 @@ async function verifyCommittedContent(input: MutationWriteInput): Promise<Domain
       input.path,
       {
         expected_sha256: expectedSha,
+        actual_sha256: current.data.sha256,
+      },
+    );
+  }
+
+  return success(undefined);
+}
+
+async function verifyCommittedStreamContent(
+  input: StreamingMutationWriteInput,
+): Promise<DomainResult<undefined>> {
+  const symlinkCheck = await validatePathIsNotSymlink(input.path);
+  if (!symlinkCheck.ok) {
+    return symlinkCheck;
+  }
+
+  const current = await readPathStat(input.path, { maxBytes: input.maxReadBytes });
+  if (!current.ok) {
+    return failure(
+      "CONCURRENCY_CONFLICT",
+      "File changed or disappeared after Scalpel committed the mutation",
+      input.path,
+      {
+        expected_sha256: input.afterSha256,
+        cause: current.error,
+      },
+    );
+  }
+
+  if (current.data.sha256 !== input.afterSha256 || current.data.sizeBytes !== input.afterSizeBytes) {
+    return failure(
+      "CONCURRENCY_CONFLICT",
+      "File changed after Scalpel committed the mutation",
+      input.path,
+      {
+        expected_sha256: input.afterSha256,
         actual_sha256: current.data.sha256,
       },
     );

@@ -219,7 +219,7 @@ machine-readable evidence:
 
 | Risk | Current State | Why It Matters |
 | --- | --- | --- |
-| Full-file memory loading | Full-text mutators still require whole-file UTF-8 snapshots under `maxReadBytes`; `read_chunk` and ranged `read` are bounded read paths | Large edit workloads still need future streaming edit design |
+| Full-file memory loading | Most full-text mutators still require whole-file UTF-8 snapshots under `maxReadBytes`; `append` has an oversized UTF-8 streaming path, and `read_chunk` plus ranged `read` are bounded read paths | Large edit workloads still need broader streaming edit design |
 | Failure payload compatibility | Failure keeps text plus `structuredContent.error` | Older clients still parse text; newer agents can use structured errors |
 | Durability | Default mode uses rename without explicit `fsync`; strict mode flushes file content and attempts parent directory flush | Power loss can leave uncertain persistence, especially where directory flush is unsupported |
 | Race windows | Path validation and write are separate steps | Files can change between validation and operation |

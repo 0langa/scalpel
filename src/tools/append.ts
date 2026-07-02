@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import { createReadStream } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 
@@ -6,10 +8,12 @@ import { createUnifiedDiff } from "../core/diff.js";
 import { combineWarnings, recordJournal, snapshotState, textState } from "../core/journal.js";
 import {
   readOptionalSnapshotForMutation,
+  readPathStatForMutation,
   readSnapshotForMutation,
+  writeTextFileStreamForMutation,
   writeTextFileForMutation,
 } from "../core/mutation.js";
-import { success, type DomainResult } from "../core/errors.js";
+import { failure, success, type DomainResult } from "../core/errors.js";
 import { withPathLock } from "../core/path-lock.js";
 import { resolveWorkspacePath } from "../core/path-policy.js";
 import { countLines } from "../core/line-endings.js";
@@ -54,6 +58,9 @@ export async function appendTool(
       maxReadBytes: config.maxReadBytes,
     });
     if (!before.ok) {
+      if (before.error.code === "FILE_TOO_LARGE" && input.dry_run !== true) {
+        return appendLargeExistingFile(input, config, resolved.data);
+      }
       return before;
     }
 
@@ -122,4 +129,89 @@ export async function appendTool(
       ...(warnings.length > 0 ? { warnings } : {}),
     });
   });
+}
+
+async function appendLargeExistingFile(
+  input: AppendInput,
+  config: ScalpelConfig,
+  path: string,
+): Promise<DomainResult<AppendResult>> {
+  const before = await readPathStatForMutation({
+    path,
+    expected_sha256: input.expected_sha256,
+    expected_mtime_ms: input.expected_mtime_ms,
+    maxReadBytes: config.maxReadBytes,
+  });
+  if (!before.ok) {
+    return before;
+  }
+  if (before.data.isDirectory) {
+    return failure("INVALID_INPUT", "Cannot append text content to a directory", path);
+  }
+  if (before.data.textKind === "binary") {
+    return failure("BINARY_FILE_NOT_SUPPORTED", "Binary files are not supported by text tools", path);
+  }
+  if (before.data.textKind === "non_utf8") {
+    return failure("UNSUPPORTED_ENCODING", "File is not valid UTF-8", path);
+  }
+  if (before.data.sha256 === undefined) {
+    return failure("UNSUPPORTED_ENCODING", "File text metadata could not be computed", path);
+  }
+
+  const afterSizeBytes = before.data.sizeBytes + Buffer.byteLength(input.content, "utf8");
+  const afterSha256 = await hashFileThenContent(path, input.content);
+  const writeResult = await writeTextFileStreamForMutation({
+    path,
+    chunks: appendChunks(path, input.content),
+    before: before.data,
+    afterSha256,
+    afterSizeBytes,
+    maxReadBytes: config.maxReadBytes,
+    durability: config.durability,
+    transactionDir: config.transactionDir,
+  });
+  if (!writeResult.ok) {
+    return writeResult;
+  }
+
+  const after = await readPathStatForMutation({ path, maxReadBytes: config.maxReadBytes });
+  if (!after.ok) {
+    return after;
+  }
+
+  const warnings = combineWarnings(
+    writeResult.data.warnings,
+    await recordJournal(config, {
+      tool: "append",
+      paths: [path],
+      dry_run: false,
+      applied: true,
+      before: snapshotState(before.data),
+      after: snapshotState(after.data),
+    }),
+  );
+
+  return success({
+    absolutePath: path,
+    lines_added: countInsertedLines(input.content),
+    new_total_lines: after.data.lineCount,
+    applied: true,
+    ...(warnings.length > 0 ? { warnings } : {}),
+  });
+}
+
+async function hashFileThenContent(path: string, content: string): Promise<string> {
+  const hash = createHash("sha256");
+  for await (const chunk of createReadStream(path)) {
+    hash.update(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  hash.update(content);
+  return hash.digest("hex");
+}
+
+async function* appendChunks(path: string, content: string): AsyncIterable<string | Buffer> {
+  for await (const chunk of createReadStream(path)) {
+    yield Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+  }
+  yield content;
 }

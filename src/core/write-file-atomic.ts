@@ -1,6 +1,6 @@
 import { open, rename, unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 import { crashIfFaultPoint } from "./fault-injection.js";
 import { beginWriteTransaction } from "./write-transaction.js";
@@ -10,10 +10,27 @@ type WriteFileAtomicOptions = {
   transactionDir?: string | undefined;
 };
 
+type WriteFileAtomicStreamOptions = WriteFileAtomicOptions & {
+  afterSha256: string;
+  afterSizeBytes: number;
+};
+
 export async function writeFileAtomic(
   path: string,
   content: string,
   options: WriteFileAtomicOptions = {}
+): Promise<string[]> {
+  return writeFileAtomicStream(path, [content], {
+    ...options,
+    afterSha256: sha256(content),
+    afterSizeBytes: Buffer.byteLength(content, "utf8"),
+  });
+}
+
+export async function writeFileAtomicStream(
+  path: string,
+  chunks: AsyncIterable<string | Buffer> | Iterable<string | Buffer>,
+  options: WriteFileAtomicStreamOptions,
 ): Promise<string[]> {
   const tempPath = join(dirname(path), `.scalpel-${randomUUID()}.tmp`);
   const warnings: string[] = [];
@@ -23,14 +40,17 @@ export async function writeFileAtomic(
         transactionDir: options.transactionDir,
         targetPath: path,
         tempPath,
-        content,
+        afterSha256: options.afterSha256,
+        afterSizeBytes: options.afterSizeBytes,
       });
   crashIfFaultPoint("text_write.after_transaction_start");
 
   try {
     const handle = await open(tempPath, "w");
     try {
-      await handle.writeFile(content, "utf8");
+      for await (const chunk of chunks) {
+        await handle.writeFile(chunk, typeof chunk === "string" ? "utf8" : undefined);
+      }
       if (options.durability === "strict") {
         await handle.sync();
       }
@@ -55,6 +75,10 @@ export async function writeFileAtomic(
   }
 
   return warnings;
+}
+
+function sha256(content: string): string {
+  return createHash("sha256").update(content).digest("hex");
 }
 
 async function flushParentDirectory(path: string): Promise<string[]> {

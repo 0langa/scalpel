@@ -35,6 +35,14 @@ export type FileStat = {
   textKind: TextKind;
 };
 
+type TextMetadata = {
+  sizeBytes: number;
+  lineCount: number;
+  sha256: string;
+  mtimeMs: number;
+  textKind: "utf8";
+};
+
 export type LineRangeSnapshot = FileSnapshot & {
   range: {
     startLine: number;
@@ -179,19 +187,34 @@ export async function readPathStat(
     }
 
     if (stats.size > (options.maxBytes ?? Number.POSITIVE_INFINITY)) {
-      const textKind = await classifyFile(path);
-      if (!textKind.ok) {
-        return textKind;
+      const metadata = await readTextMetadata(path);
+      if (metadata.ok) {
+        return success({
+          absolutePath: path,
+          isDirectory: false,
+          sizeBytes: metadata.data.sizeBytes,
+          lineCount: metadata.data.lineCount,
+          sha256: metadata.data.sha256,
+          mtimeMs: metadata.data.mtimeMs,
+          textKind: metadata.data.textKind
+        });
       }
 
-      return success({
-        absolutePath: path,
-        isDirectory: false,
-        sizeBytes: stats.size,
-        lineCount: 0,
-        mtimeMs: stats.mtimeMs,
-        textKind: textKind.data
-      });
+      if (
+        metadata.error.code === "BINARY_FILE_NOT_SUPPORTED" ||
+        metadata.error.code === "UNSUPPORTED_ENCODING"
+      ) {
+        return success({
+          absolutePath: path,
+          isDirectory: false,
+          sizeBytes: stats.size,
+          lineCount: 0,
+          mtimeMs: stats.mtimeMs,
+          textKind: metadata.error.code === "BINARY_FILE_NOT_SUPPORTED" ? "binary" : "non_utf8"
+        });
+      }
+
+      return metadata;
     }
 
     const snapshot = await readFileSnapshot(path, options);
@@ -207,6 +230,61 @@ export async function readPathStat(
       sha256: snapshot.data.sha256,
       mtimeMs: snapshot.data.mtimeMs,
       textKind: snapshot.data.textKind
+    });
+  } catch (error) {
+    return failure(
+      "FILE_NOT_FOUND",
+      error instanceof Error ? error.message : `Unable to stat ${path}`,
+      path
+    );
+  }
+}
+
+export async function readTextMetadata(path: string): Promise<DomainResult<TextMetadata>> {
+  try {
+    const stats = await stat(path);
+    const hash = createHash("sha256");
+    const decoder = new TextDecoder("utf-8", { fatal: true });
+    let pending = "";
+    let lineCount = 0;
+
+    for await (const chunk of createReadStream(path)) {
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      if (buffer.includes(0)) {
+        return failure("BINARY_FILE_NOT_SUPPORTED", "Binary files are not supported by text tools", path);
+      }
+
+      hash.update(buffer);
+
+      try {
+        pending += decoder.decode(buffer, { stream: true });
+      } catch {
+        return failure("UNSUPPORTED_ENCODING", "File is not valid UTF-8", path);
+      }
+
+      const completeLines = pending.match(/[^\n]*\n/g) ?? [];
+      if (completeLines.length > 0) {
+        lineCount += completeLines.length;
+        pending = pending.slice(completeLines.join("").length);
+      }
+    }
+
+    try {
+      pending += decoder.decode();
+    } catch {
+      return failure("UNSUPPORTED_ENCODING", "File is not valid UTF-8", path);
+    }
+
+    if (pending.length > 0) {
+      lineCount += 1;
+    }
+
+    return success({
+      sizeBytes: stats.size,
+      lineCount,
+      sha256: hash.digest("hex"),
+      mtimeMs: stats.mtimeMs,
+      textKind: "utf8"
     });
   } catch (error) {
     return failure(
