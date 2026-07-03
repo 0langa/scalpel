@@ -1,5 +1,7 @@
 # Scalpel
 
+[![CI](https://github.com/0langa/scalpel/actions/workflows/ci.yml/badge.svg)](https://github.com/0langa/scalpel/actions/workflows/ci.yml)
+
 Precise, atomic file editing for code and text over MCP.
 
 ## Status
@@ -161,3 +163,8 @@ SCALPEL_ROOTS=/repo pnpm dev
 - [docs/HARDENING.md](./docs/HARDENING.md)
 - [docs/STACK.md](./docs/STACK.md)
 - [evals/README.md](./evals/README.md)
+- [FINAL_RELEASE_SPRINT.md](./FINAL_RELEASE_SPRINT.md)
+- [CONTRIBUTING.md](./CONTRIBUTING.md)
+- [SECURITY.md](./SECURITY.md)
+- [SUPPORT.md](./SUPPORT.md)
+- [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md)
