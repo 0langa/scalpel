@@ -196,6 +196,15 @@ export async function moveTool(
     try {
       await rename(source.data, destination.data);
     } catch (error) {
+      if (isNodeErrorWithCode(error, "EXDEV")) {
+        return failure(
+          "CROSS_DEVICE_MOVE_NOT_SUPPORTED",
+          "Move across filesystems or devices is not supported",
+          source.data,
+          { destination: destination.data },
+        );
+      }
+
       return failure(
         "CONCURRENCY_CONFLICT",
         "Move failed because the source or destination changed after the move plan was built",
@@ -299,4 +308,8 @@ async function revalidateParentDirectory(path: string): Promise<DomainResult<und
       path,
     );
   }
+}
+
+function isNodeErrorWithCode(error: unknown, code: string): boolean {
+  return typeof error === "object" && error !== null && "code" in error && error.code === code;
 }

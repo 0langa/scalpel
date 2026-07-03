@@ -237,6 +237,7 @@ Moves or renames a file or directory.
 - uses Node `rename()`
 - revalidates source, destination, and the destination parent directory immediately before the rename; external replacement of any of them fails with `CONCURRENCY_CONFLICT` instead of silently overwriting or renaming into a replaced parent
 - a failed `rename()` itself (for example a parent directory that changed type between the revalidation check and the syscall) also fails with `CONCURRENCY_CONFLICT` instead of an unstructured error
+- cross-device or cross-filesystem moves are detected via the OS `EXDEV` error and rejected with `CROSS_DEVICE_MOVE_NOT_SUPPORTED` before any partial copy is attempted; Scalpel does not implement a copy/delete fallback
 
 ## Locking
 

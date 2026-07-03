@@ -199,7 +199,12 @@ Not guaranteed today:
 - cross-platform persistence guarantees for every filesystem and power-loss scenario
 - guaranteed parent-directory `fsync` on every platform
 - protection against malicious same-user changes after success is reported
-- cross-device move semantics
+
+`move` detects a cross-device or cross-filesystem rename via the OS `EXDEV`
+error and rejects it with `CROSS_DEVICE_MOVE_NOT_SUPPORTED` before any partial
+copy is attempted. Scalpel does not implement a copy/fsync/rename/delete
+fallback for cross-device moves; this is finalized as explicitly unsupported,
+not a future gap.
 
 ## Target 1.0.0 Requirements
 
