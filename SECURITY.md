@@ -2,14 +2,14 @@
 
 ## Supported Versions
 
-Security fixes are supported for the latest stable release after `1.0.0`.
-Prereleases are supported on a best-effort basis while Scalpel is still in
-alpha.
+Security fixes are supported for the latest `1.0.x` stable release. Older
+prereleases (`1.0.0-alpha.x`) are no longer supported; upgrade to `1.0.0` or
+later.
 
 | Version | Supported |
 | --- | --- |
-| `1.0.x` | yes, after `1.0.0` ships |
-| `1.0.0-alpha.x` | best effort |
+| `1.0.x` | yes |
+| `1.0.0-alpha.x` | no, upgrade |
 
 ## Reporting A Vulnerability
 
