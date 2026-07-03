@@ -5,6 +5,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 
 import { createConfig } from "./core/config.js";
 import { recoverWriteTransactions } from "./core/write-transaction.js";
+import { createLogger } from "./infra/logger.js";
 import { createScalpelServer } from "./mcp/server.js";
 
 async function main(): Promise<void> {
@@ -23,7 +24,15 @@ async function main(): Promise<void> {
       : { ...configInput, journalPath: process.env.SCALPEL_JOURNAL_PATH }
   );
 
-  await recoverWriteTransactions(config.transactionDir);
+  const logger = createLogger(config.logLevel);
+  const recovery = await recoverWriteTransactions(config.transactionDir);
+  if (recovery.scanned > 0) {
+    const hasProblems = recovery.unrecoverable > 0 || recovery.warnings.length > 0;
+    logger[hasProblems ? "error" : "info"](
+      { recovery },
+      "scalpel startup transaction recovery"
+    );
+  }
 
   const server = createScalpelServer(config);
   const transport = new StdioServerTransport();

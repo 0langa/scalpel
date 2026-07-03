@@ -1,12 +1,14 @@
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, open, readdir, readFile, rename, rm, stat } from "node:fs/promises";
-import { basename, dirname, join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { crashIfFaultPoint } from "./fault-injection.js";
 
 type WriteTransactionState = "started" | "temp_written" | "renamed";
 type MoveTransactionState = "started" | "renamed";
+
+export type RecoveryDecision = "committed" | "aborted" | "unrecoverable";
 
 export type TextWriteTransactionRecord = {
   version: 1;
@@ -51,8 +53,11 @@ export type MoveTransactionHandle = {
 
 export type RecoverySummary = {
   scanned: number;
-  recovered: number;
+  committed: number;
+  aborted: number;
+  unrecoverable: number;
   cleanedTemps: number;
+  quarantined: number;
   warnings: string[];
 };
 
@@ -147,8 +152,11 @@ export async function beginMoveTransaction(input: {
 export async function recoverWriteTransactions(transactionDir: string): Promise<RecoverySummary> {
   const summary: RecoverySummary = {
     scanned: 0,
-    recovered: 0,
+    committed: 0,
+    aborted: 0,
+    unrecoverable: 0,
     cleanedTemps: 0,
+    quarantined: 0,
     warnings: [],
   };
 
@@ -163,35 +171,73 @@ export async function recoverWriteTransactions(transactionDir: string): Promise<
     }
     summary.scanned += 1;
     const recordPath = join(transactionDir, entry.name);
+
+    let record: WriteTransactionRecord;
     try {
-      const record = parseRecord(await readFile(recordPath, "utf8"));
+      record = parseRecord(await readFile(recordPath, "utf8"));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "unknown transaction record parse error";
+      summary.unrecoverable += 1;
+      summary.warnings.push(
+        `TRANSACTION_RECOVERY_UNRECOVERABLE: ${entry.name}: corrupted record (${message})`,
+      );
+      await quarantineRecord(transactionDir, recordPath, entry.name);
+      summary.quarantined += 1;
+      continue;
+    }
+
+    try {
       const reconciled = await reconcileRecord(record);
       if (reconciled.cleanedTemp) {
         summary.cleanedTemps += 1;
       }
-      if (reconciled.recovered) {
-        summary.recovered += 1;
+
+      if (reconciled.decision === "unrecoverable") {
+        summary.unrecoverable += 1;
+        summary.warnings.push(
+          `TRANSACTION_RECOVERY_UNRECOVERABLE: ${entry.name}: ${reconciled.detail ?? "ambiguous recovery state"}`,
+        );
+        await quarantineRecord(transactionDir, recordPath, entry.name);
+        summary.quarantined += 1;
+        continue;
+      }
+
+      if (reconciled.decision === "committed") {
+        summary.committed += 1;
+      } else {
+        summary.aborted += 1;
       }
       crashIfFaultPoint("recovery.before_record_cleanup");
       await rm(recordPath, { force: true });
     } catch (error) {
       const message = error instanceof Error ? error.message : "unknown transaction recovery error";
+      summary.unrecoverable += 1;
       summary.warnings.push(
-        `TRANSACTION_RECOVERY_WARNING: ${basename(recordPath)}: ${message}`,
+        `TRANSACTION_RECOVERY_UNRECOVERABLE: ${entry.name}: ${message}`,
       );
+      await quarantineRecord(transactionDir, recordPath, entry.name);
+      summary.quarantined += 1;
     }
   }
 
   return summary;
 }
 
-async function reconcileRecord(
-  record: WriteTransactionRecord,
-): Promise<{ recovered: boolean; cleanedTemp: boolean }> {
+type ReconcileResult = {
+  decision: RecoveryDecision;
+  cleanedTemp: boolean;
+  detail?: string;
+};
+
+async function reconcileRecord(record: WriteTransactionRecord): Promise<ReconcileResult> {
   if (record.kind === "move") {
     return reconcileMoveRecord(record);
   }
 
+  return reconcileTextWriteRecord(record);
+}
+
+async function reconcileTextWriteRecord(record: TextWriteTransactionRecord): Promise<ReconcileResult> {
   const targetMatches = await fileMatches(record.targetPath, record.afterSha256, record.afterSizeBytes);
   let cleanedTemp = false;
 
@@ -200,31 +246,63 @@ async function reconcileRecord(
     cleanedTemp = true;
   }
 
-  return {
-    recovered: record.state === "renamed" && targetMatches,
-    cleanedTemp,
-  };
+  if (targetMatches) {
+    return { decision: "committed", cleanedTemp };
+  }
+
+  if (record.state === "renamed") {
+    return {
+      decision: "unrecoverable",
+      cleanedTemp,
+      detail: "record marked renamed but target content does not match the expected hash",
+    };
+  }
+
+  return { decision: "aborted", cleanedTemp };
 }
 
-function reconcileMoveRecord(
-  record: MoveTransactionRecord,
-): Promise<{ recovered: boolean; cleanedTemp: boolean }> {
+function reconcileMoveRecord(record: MoveTransactionRecord): Promise<ReconcileResult> {
   const sourceExists = existsSync(record.sourcePath);
   const destinationExists = existsSync(record.destinationPath);
 
-  if (sourceExists && !destinationExists) {
-    return Promise.resolve({ recovered: false, cleanedTemp: false });
-  }
-
   if (!sourceExists && destinationExists) {
-    return Promise.resolve({ recovered: true, cleanedTemp: false });
+    return Promise.resolve({ decision: "committed", cleanedTemp: false });
   }
 
-  if (record.state === "renamed" && destinationExists) {
-    return Promise.resolve({ recovered: true, cleanedTemp: false });
+  if (sourceExists && !destinationExists) {
+    if (record.state === "renamed") {
+      return Promise.resolve({
+        decision: "unrecoverable",
+        cleanedTemp: false,
+        detail: "record marked renamed but source still exists and destination is missing",
+      });
+    }
+    return Promise.resolve({ decision: "aborted", cleanedTemp: false });
   }
 
-  throw new Error("move transaction is in an unrecoverable ambiguous state");
+  if (sourceExists && destinationExists) {
+    return Promise.resolve({
+      decision: "unrecoverable",
+      cleanedTemp: false,
+      detail: "both source and destination exist; move outcome is ambiguous",
+    });
+  }
+
+  return Promise.resolve({
+    decision: "unrecoverable",
+    cleanedTemp: false,
+    detail: "neither source nor destination exists; move outcome cannot be determined",
+  });
+}
+
+async function quarantineRecord(transactionDir: string, recordPath: string, name: string): Promise<void> {
+  const quarantineDir = join(transactionDir, "quarantine");
+  try {
+    await mkdir(quarantineDir, { recursive: true });
+    await rename(recordPath, join(quarantineDir, `${Date.now().toString(36)}-${name}`));
+  } catch {
+    await rm(recordPath, { force: true });
+  }
 }
 
 async function fileMatches(path: string, expectedSha256: string, expectedSizeBytes: number): Promise<boolean> {

@@ -3,6 +3,10 @@ import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { failure } from "./errors.js";
+
+class PathLockTimeoutError extends Error {}
+
 const pathLocks = new Map<string, Promise<void>>();
 
 type AcquiredLock = {
@@ -42,7 +46,14 @@ export async function withPathLock<T>(paths: string[], callback: () => Promise<T
     }
 
     for (const key of keys) {
-      fileLocks.push(await acquireFileLock(key));
+      try {
+        fileLocks.push(await acquireFileLock(key));
+      } catch (error) {
+        if (error instanceof PathLockTimeoutError) {
+          return failure("LOCK_TIMEOUT", error.message, key) as T;
+        }
+        throw error;
+      }
     }
 
     return await callback();
@@ -94,9 +105,7 @@ async function acquireFileLock(key: string): Promise<FileLock> {
       }
 
       if (Date.now() - started > timeoutMs) {
-        throw new Error(`Timed out waiting for Scalpel path lock: ${lockPath}`, {
-          cause: error,
-        });
+        throw new PathLockTimeoutError(`Timed out waiting for Scalpel path lock: ${lockPath}`);
       }
 
       await delay(10);

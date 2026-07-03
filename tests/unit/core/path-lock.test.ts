@@ -113,9 +113,13 @@ describe("withPathLock", () => {
         "utf8",
       );
 
-      await expect(withPathLock(["live.txt"], () => Promise.resolve("ok"))).rejects.toThrow(
-        "Timed out waiting for Scalpel path lock",
-      );
+      await expect(withPathLock(["live.txt"], () => Promise.resolve("ok"))).resolves.toMatchObject({
+        ok: false,
+        error: {
+          code: "LOCK_TIMEOUT",
+          path: "live.txt",
+        },
+      });
     } finally {
       restoreEnv("SCALPEL_LOCK_DIR", previousLockDir);
       restoreEnv("SCALPEL_LOCK_STALE_MS", previousStaleMs);

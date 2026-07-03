@@ -1,4 +1,4 @@
-import { readdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, test } from "vitest";
@@ -84,10 +84,31 @@ describe("writeFileAtomic", () => {
 
       const summary = await recoverWriteTransactions(transactionDir);
 
-      expect(summary).toMatchObject({ scanned: 1, cleanedTemps: 1, warnings: [] });
+      expect(summary).toMatchObject({ scanned: 1, aborted: 1, cleanedTemps: 1, warnings: [] });
       await expect(readFile(filePath, "utf8")).resolves.toBe("before\n");
       await expect(readdir(transactionDir)).resolves.toEqual([]);
       await expect(readdir(root)).resolves.not.toContain(".scalpel-leftover.tmp");
+    });
+  });
+
+  test("recovery aborts a started transaction whose temp file was never created", async () => {
+    await withTempDir(async (root) => {
+      const transactionDir = join(root, ".scalpel-transactions");
+      const filePath = join(root, "missing-temp-target.txt");
+      const tempPath = join(root, ".scalpel-missing.tmp");
+      await writeFile(filePath, "before\n", "utf8");
+      await beginWriteTransaction({
+        transactionDir,
+        targetPath: filePath,
+        tempPath,
+        content: "after\n",
+      });
+
+      const summary = await recoverWriteTransactions(transactionDir);
+
+      expect(summary).toMatchObject({ scanned: 1, aborted: 1, cleanedTemps: 0, warnings: [] });
+      await expect(readFile(filePath, "utf8")).resolves.toBe("before\n");
+      await expect(readdir(transactionDir)).resolves.toEqual([]);
     });
   });
 
@@ -108,9 +129,52 @@ describe("writeFileAtomic", () => {
 
       const summary = await recoverWriteTransactions(transactionDir);
 
-      expect(summary).toMatchObject({ scanned: 1, recovered: 1, cleanedTemps: 0, warnings: [] });
+      expect(summary).toMatchObject({ scanned: 1, committed: 1, cleanedTemps: 0, warnings: [] });
       await expect(readFile(filePath, "utf8")).resolves.toBe("after\n");
       await expect(readdir(transactionDir)).resolves.toEqual([]);
+    });
+  });
+
+  test("recovery quarantines a renamed record whose target no longer matches the expected hash", async () => {
+    await withTempDir(async (root) => {
+      const transactionDir = join(root, ".scalpel-transactions");
+      const filePath = join(root, "tampered-target.txt");
+      const tempPath = join(root, ".scalpel-tampered.tmp");
+      await writeFile(filePath, "after\n", "utf8");
+      const transaction = await beginWriteTransaction({
+        transactionDir,
+        targetPath: filePath,
+        tempPath,
+        content: "after\n",
+      });
+      await transaction.markTempWritten();
+      await transaction.markRenamed();
+      await writeFile(filePath, "tampered\n", "utf8");
+
+      const summary = await recoverWriteTransactions(transactionDir);
+
+      expect(summary).toMatchObject({ scanned: 1, unrecoverable: 1, quarantined: 1, cleanedTemps: 0 });
+      expect(summary.warnings).toHaveLength(1);
+      await expect(readFile(filePath, "utf8")).resolves.toBe("tampered\n");
+      await expect(readdir(transactionDir)).resolves.toEqual(["quarantine"]);
+      await expect(readdir(join(transactionDir, "quarantine"))).resolves.toHaveLength(1);
+    });
+  });
+
+  test("recovery quarantines a corrupted transaction record instead of retrying it forever", async () => {
+    await withTempDir(async (root) => {
+      const transactionDir = join(root, ".scalpel-transactions");
+      await mkdir(transactionDir, { recursive: true });
+      await writeFile(join(transactionDir, "corrupt.json"), "{not valid json", "utf8");
+
+      const summary = await recoverWriteTransactions(transactionDir);
+
+      expect(summary).toMatchObject({ scanned: 1, unrecoverable: 1, quarantined: 1 });
+      expect(summary.warnings).toHaveLength(1);
+      await expect(readdir(transactionDir)).resolves.toEqual(["quarantine"]);
+
+      const rescanned = await recoverWriteTransactions(transactionDir);
+      expect(rescanned).toMatchObject({ scanned: 0, unrecoverable: 0, quarantined: 0 });
     });
   });
 
@@ -128,7 +192,7 @@ describe("writeFileAtomic", () => {
 
       const summary = await recoverWriteTransactions(transactionDir);
 
-      expect(summary).toMatchObject({ scanned: 1, recovered: 0, cleanedTemps: 0, warnings: [] });
+      expect(summary).toMatchObject({ scanned: 1, aborted: 1, cleanedTemps: 0, warnings: [] });
       await expect(readFile(sourcePath, "utf8")).resolves.toBe("source\n");
       await expect(readdir(transactionDir)).resolves.toEqual([]);
     });
@@ -150,9 +214,47 @@ describe("writeFileAtomic", () => {
 
       const summary = await recoverWriteTransactions(transactionDir);
 
-      expect(summary).toMatchObject({ scanned: 1, recovered: 1, cleanedTemps: 0, warnings: [] });
+      expect(summary).toMatchObject({ scanned: 1, committed: 1, cleanedTemps: 0, warnings: [] });
       await expect(readFile(destinationPath, "utf8")).resolves.toBe("source\n");
       await expect(readdir(transactionDir)).resolves.toEqual([]);
+    });
+  });
+
+  test("recovery quarantines a move transaction where both source and destination exist", async () => {
+    await withTempDir(async (root) => {
+      const transactionDir = join(root, ".scalpel-transactions");
+      const sourcePath = join(root, "move-both-source.txt");
+      const destinationPath = join(root, "move-both-destination.txt");
+      await writeFile(sourcePath, "source\n", "utf8");
+      await writeFile(destinationPath, "destination\n", "utf8");
+      await beginMoveTransaction({
+        transactionDir,
+        sourcePath,
+        destinationPath,
+      });
+
+      const summary = await recoverWriteTransactions(transactionDir);
+
+      expect(summary).toMatchObject({ scanned: 1, unrecoverable: 1, quarantined: 1 });
+      await expect(readFile(sourcePath, "utf8")).resolves.toBe("source\n");
+      await expect(readFile(destinationPath, "utf8")).resolves.toBe("destination\n");
+    });
+  });
+
+  test("recovery quarantines a move transaction where neither source nor destination exist", async () => {
+    await withTempDir(async (root) => {
+      const transactionDir = join(root, ".scalpel-transactions");
+      const sourcePath = join(root, "move-neither-source.txt");
+      const destinationPath = join(root, "move-neither-destination.txt");
+      await beginMoveTransaction({
+        transactionDir,
+        sourcePath,
+        destinationPath,
+      });
+
+      const summary = await recoverWriteTransactions(transactionDir);
+
+      expect(summary).toMatchObject({ scanned: 1, unrecoverable: 1, quarantined: 1 });
     });
   });
 });
