@@ -99,9 +99,32 @@ When `journalEnabled` is true, mutating tools append JSONL operation records. Re
 
 Text-write mutators and `move` use metadata-only transaction records in
 `config.transactionDir`. Records include paths, intended output hash/size for
-text writes, state, and timestamp, but never file content. Startup recovery runs
-before the MCP server accepts calls and cleans interrupted text-write temp files,
-completed renamed text-write records, and completed move records.
+text writes, state (`started`, `temp_written`, `renamed`), and timestamp, but
+never file content.
+
+Startup recovery runs before the MCP server accepts calls and classifies every
+scanned record into one of three terminal decisions:
+
+- `committed`: the target file's actual content matches the transaction's
+  intended hash/size, regardless of which state was last persisted. The record
+  is removed.
+- `aborted`: the rename never completed and the target still holds its prior
+  content (or, for `move`, the source still exists and the destination does
+  not). Any leftover temp file is removed. The record is removed.
+- `unrecoverable`: the on-disk evidence contradicts the record (for example a
+  record marked `renamed` whose target content does not match, or a move where
+  both source and destination exist, or neither does), or the record itself is
+  corrupted and cannot be parsed. The record is moved into
+  `config.transactionDir/quarantine` instead of being retried on every
+  startup, and a `TRANSACTION_RECOVERY_UNRECOVERABLE` warning is logged.
+  Quarantined records require manual inspection; recovery never guesses at an
+  unknown partial state.
+
+Recovery never writes file content into transaction records, warnings, or logs.
+The startup recovery summary (`scanned`, `committed`, `aborted`,
+`unrecoverable`, `cleanedTemps`, `quarantined`, `warnings`) is logged to stderr
+via the configured `logLevel`; recovery runs with `unrecoverable` results or
+warnings are always logged regardless of `logLevel`.
 
 ## MCP Resources
 
@@ -116,7 +139,7 @@ Resources are informational only and do not mutate workspace files.
 
 ## Mutating Tools
 
-Most full-text mutators reject oversized, binary, or invalid UTF-8 existing files before mutation. Oversized unsupported files fail with `FILE_TOO_LARGE`; binary and non-UTF-8 files fail with explicit encoding errors. `append` and `prepend` support streaming paths for oversized existing UTF-8 files and omit unified diff output for those paths.
+Most full-text mutators reject oversized, binary, or invalid UTF-8 existing files before mutation. Oversized unsupported files fail with `FILE_TOO_LARGE`; binary and non-UTF-8 files fail with explicit encoding errors. `patch`, `append`, and `prepend` support streaming paths for oversized existing UTF-8 files and omit unified diff output for those paths. `batch_edit`, `insert`, `delete_range`, and `replace_between_markers` still require the full file to fit within `maxReadBytes`.
 
 ### `create`
 
@@ -137,6 +160,9 @@ Exact string replacement in one file.
 - supports `"unique"`, `"first"`, `"all"`, or positive occurrence number
 - supports `dry_run`
 - supports `expected_sha256` and `expected_mtime_ms`
+- streams oversized existing UTF-8 files without loading full content into memory, including matches that span read-chunk boundaries
+- omits `diff` for the oversized streaming path
+- ambiguity rejection (`STRING_NOT_UNIQUE`) still applies on the streaming path
 
 ### `batch_edit`
 
@@ -209,3 +235,9 @@ Moves or renames a file or directory.
 - supports destination overwrite preconditions with `expected_destination_sha256` and `expected_destination_mtime_ms`
 - rejects SHA preconditions for directories with `INVALID_INPUT`
 - uses Node `rename()`
+- revalidates source, destination, and the destination parent directory immediately before the rename; external replacement of any of them fails with `CONCURRENCY_CONFLICT` instead of silently overwriting or renaming into a replaced parent
+- a failed `rename()` itself (for example a parent directory that changed type between the revalidation check and the syscall) also fails with `CONCURRENCY_CONFLICT` instead of an unstructured error
+
+## Locking
+
+Every mutating tool serializes on its target path(s) through an in-process lock and a cooperative cross-process file lock. Waiting longer than `SCALPEL_LOCK_TIMEOUT_MS` (default `30000`) for a lock held by another live process fails with `LOCK_TIMEOUT` instead of an unstructured error or an indefinite hang. Locks held by a dead process are recovered automatically after `SCALPEL_LOCK_STALE_MS` (default `300000`).

@@ -185,10 +185,14 @@ When `SCALPEL_DURABILITY=strict` is set, content writes also flush the temp file
 
 Text writes and `move` also create metadata-only transaction records under
 `config.transactionDir`. On startup, Scalpel scans those records before serving
-MCP calls. Recovery removes leftover temp files for interrupted writes, clears
-records for renamed writes whose target content already matches the intended
-post-write hash, and accepts completed move records. Transaction records include
-paths, hashes, sizes, and state where relevant, but never file content.
+MCP calls and classifies each one as `committed` (target content already
+matches the intended post-write hash), `aborted` (the write or move never
+completed; prior content is intact and any leftover temp file is removed), or
+`unrecoverable` (on-disk evidence contradicts the record, or the record itself
+is corrupted). Unrecoverable records are quarantined under
+`config.transactionDir/quarantine` instead of being retried on every startup.
+Transaction records include paths, hashes, sizes, and state where relevant, but
+never file content. The startup recovery summary is logged to stderr.
 
 Not guaranteed today:
 
@@ -227,7 +231,7 @@ machine-readable evidence:
 | Search traversal | Sequential recursive traversal | Slow for large trees |
 | Native acceleration | None | Future performance targets require new layer |
 | Audit logging | Optional metadata-only JSONL operation journal | Helps eval and rollback reasoning; crash recovery uses separate metadata-only transaction records |
-| Recovery | Startup recovery cleans interrupted text-write records, accepts completed move records, and the hardening crash lane injects killed-process failures around text writes, moves, and recovery cleanup | Platform-specific crash persistence still needs proof |
+| Recovery | Startup recovery classifies every record as `committed`, `aborted`, or `unrecoverable`, quarantines unrecoverable/corrupted records instead of retrying them forever, and the hardening crash lane injects killed-process failures around text writes, moves, and recovery cleanup | Platform-specific crash persistence still needs proof |
 | Permission model | Root confinement only | No per-tool, per-path, or risk-tier policy |
 | Parser awareness | No AST/structured formats | Small edits can still damage code/config semantics |
 

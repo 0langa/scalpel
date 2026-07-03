@@ -407,7 +407,7 @@ async function verifyCommittedStreamContent(
   return success(undefined);
 }
 
-async function validatePathIsNotSymlink(path: string): Promise<DomainResult<undefined>> {
+export async function validatePathIsNotSymlink(path: string): Promise<DomainResult<undefined>> {
   try {
     const stats = await lstat(path);
     if (stats.isSymbolicLink()) {
@@ -424,7 +424,7 @@ async function validatePathIsNotSymlink(path: string): Promise<DomainResult<unde
   return success(undefined);
 }
 
-async function runHardeningInterference(
+export async function runHardeningInterference(
   path: string,
   phase: "BEFORE_COMMIT" | "AFTER_COMMIT",
 ): Promise<void> {
@@ -449,6 +449,14 @@ async function runHardeningInterference(
     }
     await rm(path, { recursive: true, force: true });
     await symlink(target, path, "file");
+    return;
+  }
+  if (mode === "file") {
+    await rm(path, { recursive: true, force: true });
+    await writeFileAtomic(
+      path,
+      process.env[`SCALPEL_HARDENING_INTERFERE_${phase}_CONTENT`] ?? "external interference\n",
+    );
     return;
   }
 

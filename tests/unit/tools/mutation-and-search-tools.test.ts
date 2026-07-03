@@ -456,6 +456,92 @@ describe("mutation and search tools", () => {
     });
   });
 
+  test("move rejects a source that was externally replaced immediately before commit", async () => {
+    await withTempDir(async (root) => {
+      const sourcePath = join(root, "old.txt");
+      await writeFile(sourcePath, "hello\n", "utf8");
+      const config = createConfig({ roots: [root] });
+
+      const previousPath = process.env.SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_PATH;
+      const previousContent = process.env.SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_CONTENT;
+      process.env.SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_PATH = sourcePath;
+      process.env.SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_CONTENT = "external\n";
+
+      try {
+        const result = await moveTool({ source: "old.txt", destination: "new.txt" }, config);
+        expect(result.ok).toBe(false);
+        if (!result.ok) {
+          expect(result.error.code).toBe("CONCURRENCY_CONFLICT");
+        }
+      } finally {
+        restoreEnv("SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_PATH", previousPath);
+        restoreEnv("SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_CONTENT", previousContent);
+      }
+
+      await expect(readFile(sourcePath, "utf8")).resolves.toBe("external\n");
+      await expect(readFile(join(root, "new.txt"), "utf8")).rejects.toThrow();
+    });
+  });
+
+  test("move rejects a destination that externally appeared immediately before commit", async () => {
+    await withTempDir(async (root) => {
+      const sourcePath = join(root, "old.txt");
+      const destinationPath = join(root, "new.txt");
+      await writeFile(sourcePath, "hello\n", "utf8");
+      const config = createConfig({ roots: [root] });
+
+      const previousPath = process.env.SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_PATH;
+      const previousContent = process.env.SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_CONTENT;
+      process.env.SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_PATH = destinationPath;
+      process.env.SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_CONTENT = "external\n";
+
+      try {
+        const result = await moveTool({ source: "old.txt", destination: "new.txt" }, config);
+        expect(result.ok).toBe(false);
+        if (!result.ok) {
+          expect(result.error.code).toBe("CONCURRENCY_CONFLICT");
+        }
+      } finally {
+        restoreEnv("SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_PATH", previousPath);
+        restoreEnv("SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_CONTENT", previousContent);
+      }
+
+      await expect(readFile(sourcePath, "utf8")).resolves.toBe("hello\n");
+      await expect(readFile(destinationPath, "utf8")).resolves.toBe("external\n");
+    });
+  });
+
+  test("move rejects a destination parent directory that was replaced immediately before commit", async () => {
+    await withTempDir(async (root) => {
+      const sourcePath = join(root, "old.txt");
+      const destinationDir = join(root, "nested");
+      await writeFile(sourcePath, "hello\n", "utf8");
+      const config = createConfig({ roots: [root] });
+
+      const previousPath = process.env.SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_PATH;
+      const previousMode = process.env.SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_MODE;
+      const previousContent = process.env.SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_CONTENT;
+      process.env.SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_PATH = destinationDir;
+      process.env.SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_MODE = "file";
+      process.env.SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_CONTENT = "external\n";
+
+      try {
+        const result = await moveTool({ source: "old.txt", destination: "nested/new.txt" }, config);
+        expect(result.ok).toBe(false);
+        if (!result.ok) {
+          expect(result.error.code).toBe("CONCURRENCY_CONFLICT");
+        }
+      } finally {
+        restoreEnv("SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_PATH", previousPath);
+        restoreEnv("SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_MODE", previousMode);
+        restoreEnv("SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_CONTENT", previousContent);
+      }
+
+      await expect(readFile(sourcePath, "utf8")).resolves.toBe("hello\n");
+      await expect(readFile(destinationDir, "utf8")).resolves.toBe("external\n");
+    });
+  });
+
   test("grep finds literal matches across nested files", async () => {
     await withTempDir(async (root) => {
       await mkdir(join(root, "src"), { recursive: true });

@@ -103,45 +103,53 @@ const claimMap: ClaimMapEntry[] = [
   },
   {
     claim: "race-proof supported mutations before success",
-    status: "partial",
+    status: "implemented",
     release_blocking: true,
     proof_lanes: ["race", "all"],
     evidence: [
-      "same-SHA concurrent mutator checks",
+      "same-SHA concurrent mutator checks for every mutator",
       "multi-process lock checks",
-      "external interference checks before commit and before success",
+      "external write/delete/directory/symlink interference checks before commit",
+      "external write/symlink interference checks after commit before success",
+      "external source/destination/parent-directory replacement checks during move",
+      "stale-lock recovery and live-lock-timeout checks with a dedicated LOCK_TIMEOUT error code",
     ],
   },
   {
     claim: "crash-safe supported mutations with metadata-only recovery",
-    status: "partial",
+    status: "implemented",
     release_blocking: true,
     proof_lanes: ["crash", "all"],
     evidence: [
-      "killed-process fault matrix",
+      "killed-process fault matrix across text write and move transaction points",
       "startup transaction recovery checks",
       "recovery cleanup retry checks",
+      "deterministic committed/aborted/unrecoverable recovery classification",
+      "corrupted and ambiguous record quarantine instead of unbounded retry",
     ],
   },
   {
     claim: "large-scale repository traversal and bounded operation evidence",
-    status: "partial",
+    status: "implemented",
     release_blocking: true,
     proof_lanes: ["corpus", "all"],
     evidence: [
       "expanded public corpus traversal",
       "tracked file counts",
       "RSS and duration telemetry",
+      "bounded scalpel-server RSS growth check for a large streaming edit",
     ],
   },
   {
     claim: "streaming large-file mutation",
-    status: "partial",
+    status: "implemented",
     release_blocking: true,
     proof_lanes: ["corpus", "all"],
     evidence: [
       "oversized UTF-8 append and prepend paths",
-      "broader streaming mutation checks pending",
+      "oversized UTF-8 exact-replacement patch path, including chunk-boundary matches and ambiguity rejection",
+      "oversized binary and non-UTF-8 files still fail closed before mutation",
+      "single long-line oversized file streaming",
     ],
   },
   {
@@ -149,7 +157,7 @@ const claimMap: ClaimMapEntry[] = [
     status: "planned",
     release_blocking: true,
     proof_lanes: ["crash", "all"],
-    evidence: ["Windows and Unix-like final reports pending"],
+    evidence: ["Windows expanded report available; Unix-like final report pending"],
   },
 ];
 
@@ -381,6 +389,252 @@ async function runLargeStreamingMutationSuite(): Promise<void> {
     assert(appendedContent === `${baseContent}tail\n`, "large append content mismatch");
     assert(prependedContent === `head\n${baseContent}`, "large prepend content mismatch");
   });
+
+  await timedCheck("large streaming: patch unique replacement in oversized file", "required", async () => {
+    const root = await freshSyntheticRoot("large-streaming-patch");
+    const filler = "0123456789abcdef\n".repeat(150_000);
+    const filePath = join(root, "patch-large.txt");
+    await writeFile(filePath, `${filler}UNIQUE_LARGE_TARGET\n${filler}`, "utf8");
+
+    await withScalpelClient(root, "large-streaming-patch", async (client) => {
+      const patched = await client.callTool({
+        name: "patch",
+        arguments: {
+          path: "patch-large.txt",
+          old_string: "UNIQUE_LARGE_TARGET",
+          new_string: "REPLACED_LARGE_TARGET",
+        },
+      });
+      assert(patched.isError !== true, "large patch failed");
+    });
+
+    const updated = await readFile(filePath, "utf8");
+    assert(
+      updated === `${filler}REPLACED_LARGE_TARGET\n${filler}`,
+      "large patch content mismatch",
+    );
+  });
+
+  await timedCheck("large streaming: patch match spanning a read-chunk boundary", "required", async () => {
+    const root = await freshSyntheticRoot("large-streaming-boundary");
+    const filePath = join(root, "boundary-large.txt");
+    const padding = "0123456789abcdef\n".repeat(140_000);
+    const straddle = `${"x".repeat(65_535)}BOUNDARY_TARGET\n`;
+    await writeFile(filePath, `${padding}${straddle}${padding}`, "utf8");
+
+    await withScalpelClient(root, "large-streaming-boundary", async (client) => {
+      const patched = await client.callTool({
+        name: "patch",
+        arguments: {
+          path: "boundary-large.txt",
+          old_string: "xBOUNDARY_TARGET",
+          new_string: "yBOUNDARY_TARGET",
+        },
+      });
+      assert(patched.isError !== true, "boundary-spanning large patch failed");
+    });
+
+    const updated = await readFile(filePath, "utf8");
+    const expectedStraddle = `${"x".repeat(65_534)}yBOUNDARY_TARGET\n`;
+    assert(
+      updated === `${padding}${expectedStraddle}${padding}`,
+      "boundary-spanning large patch content mismatch",
+    );
+  });
+
+  await timedCheck("large streaming: patch rejects ambiguous oversized match", "required", async () => {
+    const root = await freshSyntheticRoot("large-streaming-ambiguous");
+    const filler = "0123456789abcdef\n".repeat(150_000);
+    const filePath = join(root, "ambiguous-large.txt");
+    const original = `${filler}NEEDLE\n${filler}NEEDLE\n`;
+    await writeFile(filePath, original, "utf8");
+
+    await withScalpelClient(root, "large-streaming-ambiguous", async (client) => {
+      const patched = await client.callTool({
+        name: "patch",
+        arguments: { path: "ambiguous-large.txt", old_string: "NEEDLE", new_string: "REPLACED" },
+      });
+      assert(patched.isError === true, "ambiguous large patch unexpectedly succeeded");
+      assert(
+        hasErrorCode(patched.structuredContent, "STRING_NOT_UNIQUE"),
+        "ambiguous large patch returned wrong error",
+      );
+    });
+
+    const unchanged = await readFile(filePath, "utf8");
+    assert(unchanged === original, "ambiguous large patch mutated the file");
+  });
+
+  await timedCheck("large streaming: oversized binary file rejected before mutation", "required", async () => {
+    const root = await freshSyntheticRoot("large-streaming-binary");
+    const filePath = join(root, "binary-large.bin");
+    const original = Buffer.concat([
+      Buffer.from("0123456789abcdef\n".repeat(150_000), "utf8"),
+      Buffer.from([0, 1, 2, 3]),
+      Buffer.from("0123456789abcdef\n".repeat(150_000), "utf8"),
+    ]);
+    await writeFile(filePath, original);
+
+    await withScalpelClient(root, "large-streaming-binary", async (client) => {
+      const patched = await client.callTool({
+        name: "patch",
+        arguments: { path: "binary-large.bin", old_string: "abcdef", new_string: "ABCDEF" },
+      });
+      assert(patched.isError === true, "large binary patch unexpectedly succeeded");
+      assert(
+        hasErrorCode(patched.structuredContent, "BINARY_FILE_NOT_SUPPORTED"),
+        "large binary patch returned wrong error",
+      );
+    });
+
+    const unchanged = await readFile(filePath);
+    assert(unchanged.equals(original), "large binary file was mutated");
+  });
+
+  await timedCheck("large streaming: oversized non-UTF-8 file rejected before mutation", "required", async () => {
+    const root = await freshSyntheticRoot("large-streaming-non-utf8");
+    const filePath = join(root, "non-utf8-large.txt");
+    const original = Buffer.concat([
+      Buffer.from("0123456789abcdef\n".repeat(150_000), "utf8"),
+      Buffer.from([0xff, 0xfe, 0xfd]),
+      Buffer.from("0123456789abcdef\n".repeat(150_000), "utf8"),
+    ]);
+    await writeFile(filePath, original);
+
+    await withScalpelClient(root, "large-streaming-non-utf8", async (client) => {
+      const patched = await client.callTool({
+        name: "patch",
+        arguments: { path: "non-utf8-large.txt", old_string: "abcdef", new_string: "ABCDEF" },
+      });
+      assert(patched.isError === true, "large non-UTF-8 patch unexpectedly succeeded");
+      assert(
+        hasErrorCode(patched.structuredContent, "UNSUPPORTED_ENCODING"),
+        "large non-UTF-8 patch returned wrong error",
+      );
+    });
+
+    const unchanged = await readFile(filePath);
+    assert(unchanged.equals(original), "large non-UTF-8 file was mutated");
+  });
+
+  await timedCheck("large streaming: single long-line oversized file", "required", async () => {
+    const root = await freshSyntheticRoot("large-streaming-longline");
+    const filePath = join(root, "longline-large.txt");
+    const prefix = "a".repeat(3_000_000);
+    const suffix = "b".repeat(3_000_000);
+    await writeFile(filePath, `${prefix}LONGLINE_TARGET${suffix}`, "utf8");
+
+    await withScalpelClient(root, "large-streaming-longline", async (client) => {
+      const patched = await client.callTool({
+        name: "patch",
+        arguments: {
+          path: "longline-large.txt",
+          old_string: "LONGLINE_TARGET",
+          new_string: "LONGLINE_REPLACED",
+        },
+      });
+      assert(patched.isError !== true, "single long-line large patch failed");
+    });
+
+    const updated = await readFile(filePath, "utf8");
+    assert(
+      updated === `${prefix}LONGLINE_REPLACED${suffix}`,
+      "single long-line large patch content mismatch",
+    );
+  });
+
+  await timedCheck(
+    "large streaming: patch keeps scalpel server RSS growth bounded",
+    "required",
+    async () => {
+      const root = await freshSyntheticRoot("large-streaming-rss");
+      const filler = "0123456789abcdef\n".repeat(700_000);
+      const filePath = join(root, "rss-large.txt");
+      await writeFile(filePath, `${filler}RSS_TARGET_MARKER\n${filler}`, "utf8");
+
+      const journalPath = join(reportDir, "large-streaming-rss-journal.jsonl");
+      const transport = createScalpelTransport(root, journalPath);
+      const client = new Client({ name: "scalpel-hardening-large-streaming-rss", version: "0.1.0" });
+      await client.connect(transport);
+      try {
+        const pid = transport.pid;
+        assert(pid !== null, "failed to resolve scalpel server pid");
+
+        const warmup = await client.callTool({ name: "config", arguments: {} });
+        assert(warmup.isError !== true, "warm-up call failed");
+
+        const baselineRss = await readProcessRssBytes(pid);
+        assert(baselineRss !== undefined, "could not sample scalpel server memory on this platform");
+
+        const patched = await client.callTool({
+          name: "patch",
+          arguments: {
+            path: "rss-large.txt",
+            old_string: "RSS_TARGET_MARKER",
+            new_string: "RSS_REPLACED_MARKER",
+          },
+        });
+        assert(patched.isError !== true, "large patch failed during RSS check");
+
+        await delay(200);
+        const afterRss = await readProcessRssBytes(pid);
+        assert(afterRss !== undefined, "could not resample scalpel server memory on this platform");
+
+        const fileSizeBytes = Buffer.byteLength(filler, "utf8") * 2;
+        const growthBytes = afterRss - baselineRss;
+        // Bounded/streaming edits should not need to hold more than roughly one
+        // file-size-equivalent of transient allocation (decoded chunks, the
+        // matched/replaced output, and the two full read passes for planning and
+        // writing). Full in-memory buffering of old and new content together
+        // would need at least ~2x the file size, so this bound stays well clear
+        // of ordinary GC/allocator noise while still catching non-streaming
+        // regressions.
+        const growthBoundBytes = fileSizeBytes;
+        assert(
+          growthBytes < growthBoundBytes,
+          `scalpel server RSS grew by ${String(growthBytes)} bytes streaming a ${String(fileSizeBytes)} byte file`,
+        );
+      } finally {
+        await Promise.allSettled([client.close(), transport.close()]);
+      }
+
+      const updated = await readFile(filePath, "utf8");
+      assert(
+        updated === `${filler}RSS_REPLACED_MARKER\n${filler}`,
+        "large patch content mismatch during RSS check",
+      );
+    },
+  );
+}
+
+async function readProcessRssBytes(pid: number): Promise<number | undefined> {
+  try {
+    if (process.platform === "linux") {
+      const status = await readFile(`/proc/${String(pid)}/status`, "utf8");
+      const match = /VmRSS:\s+(\d+) kB/.exec(status);
+      return match ? Number(match[1]) * 1024 : undefined;
+    }
+
+    if (process.platform === "darwin") {
+      const output = await run("ps", ["-o", "rss=", "-p", String(pid)], process.cwd());
+      const value = Number(output.trim());
+      return Number.isFinite(value) ? value * 1024 : undefined;
+    }
+
+    if (process.platform === "win32") {
+      const output = await run(
+        "powershell",
+        ["-NoProfile", "-Command", `(Get-Process -Id ${String(pid)}).WorkingSet64`],
+        process.cwd(),
+      );
+      const value = Number(output.trim());
+      return Number.isFinite(value) ? value : undefined;
+    }
+
+    return undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 type GitFixtureState = {
@@ -1218,6 +1472,168 @@ async function runRaceSuite(): Promise<void> {
       },
     );
   });
+
+  await timedCheck("race: external source replacement during move is rejected", "required", async () => {
+    const moveRoot = await freshSyntheticRoot("race-move-source-replace");
+    const sourcePath = join(moveRoot, "move-source.txt");
+    const destinationPath = join(moveRoot, "move-destination.txt");
+    await writeFile(sourcePath, "alpha\n", "utf8");
+
+    await withTemporaryEnv(
+      {
+        SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_PATH: sourcePath,
+        SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_CONTENT: "external\n",
+      },
+      async () => {
+        await withScalpelClient(moveRoot, "race-move-source-replace", async (client) => {
+          const result = await client.callTool({
+            name: "move",
+            arguments: { source: "move-source.txt", destination: "move-destination.txt" },
+          });
+          assert(result.isError === true, "source replacement during move was silently overwritten");
+          assert(
+            hasErrorCode(result.structuredContent, "CONCURRENCY_CONFLICT"),
+            "source replacement during move returned wrong error",
+          );
+        });
+      },
+    );
+
+    assert(
+      (await readFile(sourcePath, "utf8")) === "external\n",
+      "source replacement during move was not preserved",
+    );
+    assert(!existsSync(destinationPath), "move silently completed despite source replacement");
+  });
+
+  await timedCheck(
+    "race: external destination replacement during move is rejected",
+    "required",
+    async () => {
+      const moveRoot = await freshSyntheticRoot("race-move-destination-replace");
+      const sourcePath = join(moveRoot, "move-source.txt");
+      const destinationPath = join(moveRoot, "move-destination.txt");
+      await writeFile(sourcePath, "alpha\n", "utf8");
+
+      await withTemporaryEnv(
+        {
+          SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_PATH: destinationPath,
+          SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_CONTENT: "external\n",
+        },
+        async () => {
+          await withScalpelClient(moveRoot, "race-move-destination-replace", async (client) => {
+            const result = await client.callTool({
+              name: "move",
+              arguments: { source: "move-source.txt", destination: "move-destination.txt" },
+            });
+            assert(
+              result.isError === true,
+              "destination replacement during move was silently overwritten",
+            );
+            assert(
+              hasErrorCode(result.structuredContent, "CONCURRENCY_CONFLICT"),
+              "destination replacement during move returned wrong error",
+            );
+          });
+        },
+      );
+
+      assert(
+        (await readFile(sourcePath, "utf8")) === "alpha\n",
+        "source was mutated after destination replacement",
+      );
+      assert(
+        (await readFile(destinationPath, "utf8")) === "external\n",
+        "destination replacement during move was not preserved",
+      );
+    },
+  );
+
+  await timedCheck(
+    "race: external parent directory replacement during move is rejected",
+    "required",
+    async () => {
+      const moveRoot = await freshSyntheticRoot("race-move-parent-replace");
+      const sourcePath = join(moveRoot, "move-source.txt");
+      const destinationDir = join(moveRoot, "nested-destination");
+      const destinationPath = join(destinationDir, "move-destination.txt");
+      await writeFile(sourcePath, "alpha\n", "utf8");
+
+      await withTemporaryEnv(
+        {
+          SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_PATH: destinationDir,
+          SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_MODE: "file",
+          SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_CONTENT: "external\n",
+        },
+        async () => {
+          await withScalpelClient(moveRoot, "race-move-parent-replace", async (client) => {
+            const result = await client.callTool({
+              name: "move",
+              arguments: {
+                source: "move-source.txt",
+                destination: "nested-destination/move-destination.txt",
+              },
+            });
+            assert(
+              result.isError === true,
+              "parent directory replacement during move was silently accepted",
+            );
+            assert(
+              hasErrorCode(result.structuredContent, "CONCURRENCY_CONFLICT"),
+              "parent directory replacement during move returned wrong error",
+            );
+          });
+        },
+      );
+
+      assert(
+        (await readFile(sourcePath, "utf8")) === "alpha\n",
+        "source was mutated after parent directory replacement",
+      );
+      assert(!existsSync(destinationPath), "move wrote into a replaced parent directory");
+    },
+  );
+
+  await timedCheck("race: live lock timeout returns a clear error", "required", async () => {
+    const lockRoot = await freshSyntheticRoot("race-live-lock");
+    const relativePath = "live-lock.txt";
+    const absolutePath = join(lockRoot, relativePath);
+    await writeFile(absolutePath, "alpha\n", "utf8");
+    const lockDir = join(reportDir, "locks", "live-lock-timeout");
+    await mkdir(lockDir, { recursive: true });
+    await createLivePathLock(lockDir, absolutePath);
+
+    try {
+      const journalPath = join(reportDir, "live-lock-timeout-journal.jsonl");
+      const transport = createScalpelTransport(lockRoot, journalPath, {
+        SCALPEL_LOCK_DIR: lockDir,
+        SCALPEL_LOCK_TIMEOUT_MS: "100",
+        SCALPEL_LOCK_STALE_MS: "300000",
+      });
+      const client = new Client({ name: "scalpel-hardening-live-lock", version: "0.1.0" });
+      await client.connect(transport);
+      try {
+        const result = await client.callTool({
+          name: "append",
+          arguments: { path: relativePath, content: "tail\n" },
+        });
+        assert(result.isError === true, "live lock contention was silently overwritten");
+        assert(
+          hasErrorCode(result.structuredContent, "LOCK_TIMEOUT"),
+          "live lock contention returned wrong error",
+        );
+      } finally {
+        await Promise.allSettled([client.close(), transport.close()]);
+      }
+    } finally {
+      await rm(lockDir, { recursive: true, force: true });
+    }
+
+    assert(
+      (await readFile(absolutePath, "utf8")) === "alpha\n",
+      "file was mutated despite a live lock timeout",
+    );
+  });
 }
 
 async function runCrashSuite(): Promise<void> {
@@ -1263,6 +1679,11 @@ async function runCrashSuite(): Promise<void> {
     },
   );
 
+  // Advisory, not release-blocking: this probe only closes the client transport
+  // and races the still-running server process, so it cannot reliably force a
+  // genuine interruption. The release-blocking guarantee (no leftover temp
+  // files after an actual killed-process crash) is proven by the required
+  // fault-injection and recovery-cleanup checks below.
   await timedCheck(
     "crash: interrupted write leaves no scalpel temp files",
     "advisory",
@@ -1602,6 +2023,21 @@ async function createStalePathLock(lockDir: string, absolutePath: string): Promi
       pid: 999_999_999,
       key_hash: hashKey(absolutePath),
       acquired_at: "2000-01-01T00:00:00.000Z",
+    })}\n`,
+    "utf8",
+  );
+}
+
+async function createLivePathLock(lockDir: string, absolutePath: string): Promise<void> {
+  await mkdir(lockDir, { recursive: true });
+  const lockPath = join(lockDir, `${hashKey(absolutePath)}.lock`);
+  await mkdir(lockPath, { recursive: true });
+  await writeFile(
+    join(lockPath, "owner.json"),
+    `${JSON.stringify({
+      pid: process.pid,
+      key_hash: hashKey(absolutePath),
+      acquired_at: new Date().toISOString(),
     })}\n`,
     "utf8",
   );

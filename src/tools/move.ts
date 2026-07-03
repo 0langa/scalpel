@@ -4,8 +4,13 @@ import { dirname } from "node:path";
 import { type ScalpelConfig } from "../core/config.js";
 import { failure, success, type DomainResult } from "../core/errors.js";
 import { crashIfFaultPoint } from "../core/fault-injection.js";
+import { type FileStat, readPathStat } from "../core/file-metadata.js";
 import { recordJournal, snapshotState } from "../core/journal.js";
-import { readPathStatForMutation } from "../core/mutation.js";
+import {
+  readPathStatForMutation,
+  runHardeningInterference,
+  validatePathIsNotSymlink,
+} from "../core/mutation.js";
 import { withPathLock } from "../core/path-lock.js";
 import { resolveWorkspacePath } from "../core/path-policy.js";
 import { beginMoveTransaction } from "../core/write-transaction.js";
@@ -135,13 +140,69 @@ export async function moveTool(
     }
 
     await mkdir(dirname(destination.data), { recursive: true });
+
+    await runHardeningInterference(source.data, "BEFORE_COMMIT");
+    await runHardeningInterference(destination.data, "BEFORE_COMMIT");
+    await runHardeningInterference(dirname(destination.data), "BEFORE_COMMIT");
+
+    const sourceGuard = await revalidatePathBeforeMove(source.data, sourceStat.data, config.maxReadBytes);
+    if (!sourceGuard.ok) {
+      await recordJournal(config, {
+        tool: "move",
+        paths: [source.data, destination.data],
+        dry_run: false,
+        applied: false,
+        error_code: sourceGuard.error.code,
+        before: snapshotState(sourceStat.data),
+      });
+      return sourceGuard;
+    }
+
+    const destinationGuard =
+      destinationExists && destinationBefore?.ok === true
+        ? await revalidatePathBeforeMove(destination.data, destinationBefore.data, config.maxReadBytes)
+        : await revalidatePathIsAbsent(destination.data);
+    if (!destinationGuard.ok) {
+      await recordJournal(config, {
+        tool: "move",
+        paths: [source.data, destination.data],
+        dry_run: false,
+        applied: false,
+        error_code: destinationGuard.error.code,
+        before: snapshotState(sourceStat.data),
+      });
+      return destinationGuard;
+    }
+
+    const parentGuard = await revalidateParentDirectory(dirname(destination.data));
+    if (!parentGuard.ok) {
+      await recordJournal(config, {
+        tool: "move",
+        paths: [source.data, destination.data],
+        dry_run: false,
+        applied: false,
+        error_code: parentGuard.error.code,
+        before: snapshotState(sourceStat.data),
+      });
+      return parentGuard;
+    }
+
     const transaction = await beginMoveTransaction({
       transactionDir: config.transactionDir,
       sourcePath: source.data,
       destinationPath: destination.data,
     });
     crashIfFaultPoint("move.after_transaction_start");
-    await rename(source.data, destination.data);
+    try {
+      await rename(source.data, destination.data);
+    } catch (error) {
+      return failure(
+        "CONCURRENCY_CONFLICT",
+        "Move failed because the source or destination changed after the move plan was built",
+        source.data,
+        { cause: error instanceof Error ? error.message : String(error) },
+      );
+    }
     crashIfFaultPoint("move.after_rename");
     await transaction.markRenamed();
     crashIfFaultPoint("move.after_mark_renamed");
@@ -166,4 +227,76 @@ export async function moveTool(
       ...(warnings.length > 0 ? { warnings } : {}),
     });
   });
+}
+
+async function revalidatePathBeforeMove(
+  path: string,
+  before: FileStat,
+  maxReadBytes: number | undefined,
+): Promise<DomainResult<undefined>> {
+  const symlinkCheck = await validatePathIsNotSymlink(path);
+  if (!symlinkCheck.ok) {
+    return symlinkCheck;
+  }
+
+  const current = await readPathStat(path, { maxBytes: maxReadBytes });
+  if (!current.ok) {
+    return failure(
+      "CONCURRENCY_CONFLICT",
+      "Path changed or disappeared after the move plan was built",
+      path,
+      { cause: current.error },
+    );
+  }
+
+  const shaChanged = before.sha256 !== undefined && current.data.sha256 !== before.sha256;
+  if (
+    current.data.mtimeMs !== before.mtimeMs ||
+    current.data.isDirectory !== before.isDirectory ||
+    shaChanged
+  ) {
+    return failure("CONCURRENCY_CONFLICT", "Path changed after the move plan was built", path, {
+      expected_mtime_ms: before.mtimeMs,
+      actual_mtime_ms: current.data.mtimeMs,
+      ...(before.sha256 !== undefined
+        ? { expected_sha256: before.sha256, actual_sha256: current.data.sha256 }
+        : {}),
+    });
+  }
+
+  return success(undefined);
+}
+
+async function revalidatePathIsAbsent(path: string): Promise<DomainResult<undefined>> {
+  const symlinkCheck = await validatePathIsNotSymlink(path);
+  if (!symlinkCheck.ok) {
+    return symlinkCheck;
+  }
+
+  try {
+    await stat(path);
+    return failure("CONCURRENCY_CONFLICT", "Destination appeared after the move plan was built", path);
+  } catch {
+    return success(undefined);
+  }
+}
+
+async function revalidateParentDirectory(path: string): Promise<DomainResult<undefined>> {
+  try {
+    const info = await stat(path);
+    if (!info.isDirectory()) {
+      return failure(
+        "CONCURRENCY_CONFLICT",
+        "Destination parent directory was replaced after the move plan was built",
+        path,
+      );
+    }
+    return success(undefined);
+  } catch {
+    return failure(
+      "CONCURRENCY_CONFLICT",
+      "Destination parent directory disappeared after the move plan was built",
+      path,
+    );
+  }
 }

@@ -181,13 +181,16 @@ Required proof:
 
 Required implementation:
 
-- Durable transaction records for pending writes and moves.
-- Startup recovery scanner with deterministic states:
-  `pending`, `written`, `renamed`, `committed`, `aborted`.
+- Durable transaction records for pending writes and moves, tracking write
+  progress through explicit states: `started`, `temp_written`, `renamed`.
+- Startup recovery scanner that classifies every scanned record into one of
+  three deterministic terminal decisions: `committed`, `aborted`, or
+  `unrecoverable`. Corrupted or ambiguous records are quarantined under
+  `config.transactionDir/quarantine` instead of being retried forever.
 - Fault injection hooks around transaction write, temp write, file sync, rename,
   parent-directory sync, journal write, and recovery cleanup.
-- Recovery must return each target to old content or new content, never partial
-  or unknown content.
+- Recovery must return each target to old content or new content, or classify
+  it `unrecoverable`; it never silently accepts unknown partial content.
 
 Required proof:
 
