@@ -1,9 +1,11 @@
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
 import { describe, expect, test } from "vitest";
 
-const safetyModelVersion = "scalpel-safety-model-v1-draft";
+const broadSafetyTerms = [/crash-safe/i, /race-proof/i, /large-scale/i];
+
+const safetyModelVersion = "scalpel-safety-model-v1";
 
 async function readRepoFile(path: string): Promise<string> {
   return readFile(resolve(path), "utf8");
@@ -33,5 +35,37 @@ describe("safety contract documentation", () => {
     expect(hardeningScript).toContain("claim_map: ClaimMapEntry[]");
     expect(hardeningScript).toContain("streaming large-file mutation");
     expect(hardeningScript).toContain("cross-platform persistence evidence");
+  });
+
+  test("final release notes never use broad safety terms without linking to the safety model", async () => {
+    // Prereleases (alpha/beta/rc) predate the finalized safety model and are
+    // historical records, not final release claims; only final release notes
+    // are held to this rule.
+    const releasesDir = resolve("docs/releases");
+    const entries = await readdir(releasesDir, { withFileTypes: true });
+    const releaseNoteFiles = entries
+      .filter(
+        (entry) =>
+          entry.isFile() &&
+          entry.name.endsWith(".md") &&
+          !entry.name.endsWith("-audit.md") &&
+          !/-alpha\.|-beta\.|-rc\./.test(entry.name),
+      )
+      .map((entry) => entry.name);
+
+    expect(releaseNoteFiles.length).toBeGreaterThan(0);
+
+    for (const name of releaseNoteFiles) {
+      const content = await readRepoFile(`docs/releases/${name}`);
+      const usesBroadTerm = broadSafetyTerms.some((term) => term.test(content));
+      if (!usesBroadTerm) {
+        continue;
+      }
+
+      expect(
+        content.includes("SAFETY_MODEL.md"),
+        `${name} uses a broad safety term (crash-safe/race-proof/large-scale) without linking to docs/SAFETY_MODEL.md`,
+      ).toBe(true);
+    }
   });
 });

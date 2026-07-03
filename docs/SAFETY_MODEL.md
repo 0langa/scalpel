@@ -5,7 +5,7 @@ It is the source of truth for what Scalpel may claim in release notes.
 
 ## Safety Model Version
 
-Safety model version: `scalpel-safety-model-v1-draft`
+Safety model version: `scalpel-safety-model-v1`
 
 Final `1.0.0` release notes must reference this document and must not use broad
 terms such as "crash-safe", "race-proof", or "large-scale" unless the linked

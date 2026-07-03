@@ -1,6 +1,6 @@
 {
   "name": "scalpel",
-  "version": "1.0.0-alpha.1",
+  "version": "1.0.0",
   "description": "Precise, atomic file editing for code and text over MCP.",
   "license": "Apache-2.0",
   "repository": {

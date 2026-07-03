@@ -1,14 +1,15 @@
 # Scalpel
 
 [![CI](https://github.com/0langa/scalpel/actions/workflows/ci.yml/badge.svg)](https://github.com/0langa/scalpel/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/0langa/scalpel)](https://github.com/0langa/scalpel/releases/latest)
 
 Precise, atomic file editing for code and text over MCP.
 
 ## Status
 
-`1.0.0-alpha.1` prerelease. The Windows hardening baseline covers transaction recovery, killed-process fault injection, cooperative race handling, symlink-swap rejection, and expanded public-corpus stress. It is not the final `1.0.0` safety claim: streaming large-file mutation and Unix-like persistence evidence remain open.
+`1.0.0` stable. Expanded hardening (public-corpus stress, race/interference coverage, and the killed-process fault matrix) passes on Windows and on Linux. Streaming mutation for oversized `patch`/`append`/`prepend` targets, an explicit transaction recovery state machine, and commit-time revalidation for `move` are all implemented and proven.
 
-See [the prerelease notes](./docs/releases/2026-06-19-v1.0.0-alpha.1.md) for verification evidence and known gaps.
+See [the release notes](./docs/releases/2026-07-03-v1.0.0.md) for the full safety claim, evidence summary, supported platforms, unsupported cases, and migration notes from the alpha.
 
 ## Implemented Tools
 
@@ -31,7 +32,17 @@ See [the prerelease notes](./docs/releases/2026-06-19-v1.0.0-alpha.1.md) for ver
 
 ## Run
 
-Install dependencies:
+Install from the GitHub release tarball:
+
+```bash
+npm install https://github.com/0langa/scalpel/releases/download/v1.0.0/scalpel-1.0.0.tgz
+node node_modules/scalpel/dist/index.js
+```
+
+Scalpel is not published to the npm registry for this release; install from
+the release tarball or from source.
+
+Install dependencies for local development:
 
 ```bash
 pnpm install
@@ -145,6 +156,23 @@ SCALPEL_ROOTS=/repo pnpm dev
 - Default: best-effort atomic rename without explicit durability flush
 - Parent-directory flush support is platform-dependent; unsupported flushes are reported as warnings
 
+## Safety Model Summary
+
+Full definitions live in [docs/SAFETY_MODEL.md](./docs/SAFETY_MODEL.md) (safety model version `scalpel-safety-model-v1`). Final release notes only use terms like "crash-safe" or "race-proof" when linked to that document and backed by hardening evidence.
+
+- **Crash-safe**: startup recovery classifies every pending transaction as `committed`, `aborted`, or `unrecoverable` from on-disk evidence, and never silently accepts unknown partial state.
+- **Race-proof**: mutations serialize on their target paths in-process and across cooperative Scalpel processes; external interference before or after commit fails closed or is reported as a conflict; `move` revalidates source, destination, and destination parent directory immediately before renaming.
+- **Large-scale**: `patch`, `append`, and `prepend` stream oversized existing UTF-8 files above `maxReadBytes` with bounded memory; expanded public-corpus traversal is proven on Windows and Linux.
+- **Recoverable**: transaction and recovery records are metadata-only and never contain file content.
+
+### Known Unsupported Cases
+
+- Malicious same-user modification after Scalpel reports success.
+- Cross-device moves: detected via `EXDEV` and rejected with `CROSS_DEVICE_MOVE_NOT_SUPPORTED`; no copy/delete fallback.
+- Network filesystems and sync folders with non-standard rename/fsync semantics.
+- Binary byte-edit workflows and parser-aware semantic edits.
+- `batch_edit`, `insert`, `delete_range`, and `replace_between_markers` still require the full file to fit within `maxReadBytes`.
+
 ## Docs
 
 - [SCALPEL_MASTER_HANDBOOK.md](./SCALPEL_MASTER_HANDBOOK.md)
@@ -162,6 +190,8 @@ SCALPEL_ROOTS=/repo pnpm dev
 - [docs/DOCS_MAINTENANCE.md](./docs/DOCS_MAINTENANCE.md)
 - [docs/HARDENING.md](./docs/HARDENING.md)
 - [docs/STACK.md](./docs/STACK.md)
+- [docs/releases/2026-07-03-v1.0.0.md](./docs/releases/2026-07-03-v1.0.0.md)
+- [docs/releases/2026-07-03-v1.0.0-audit.md](./docs/releases/2026-07-03-v1.0.0-audit.md)
 - [evals/README.md](./evals/README.md)
 - [FINAL_RELEASE_SPRINT.md](./FINAL_RELEASE_SPRINT.md)
 - [CONTRIBUTING.md](./CONTRIBUTING.md)

@@ -103,7 +103,7 @@ const reportStamp = new Date().toISOString().replace(/[:.]/g, "-");
 const reportDir = resolve(hardeningRoot, "reports", reportStamp);
 const checks: Check[] = [];
 let peakRssBytes = process.memoryUsage().rss;
-const safetyModelVersion = "scalpel-safety-model-v1-draft";
+const safetyModelVersion = "scalpel-safety-model-v1";
 const claimMap: ClaimMapEntry[] = [
   {
     claim: "workspace-confined MCP file operations",
@@ -169,10 +169,14 @@ const claimMap: ClaimMapEntry[] = [
   },
   {
     claim: "cross-platform persistence evidence",
-    status: "planned",
+    status: "implemented",
     release_blocking: true,
     proof_lanes: ["crash", "all"],
-    evidence: ["Windows expanded report available; Unix-like final report pending"],
+    evidence: [
+      "Windows expanded hardening: 96/96 required checks passed",
+      "Linux (ubuntu-latest) expanded hardening via GitHub Actions: 96/96 required checks passed",
+      "platform metadata and a parent-directory fsync probe recorded per report (Windows: unsupported/EPERM; Linux: supported)",
+    ],
   },
 ];
 
