@@ -240,13 +240,18 @@ export async function readPathStat(
   }
 }
 
+function countNewlines(content: string): number {
+  return content.split("\n").length - 1;
+}
+
 export async function readTextMetadata(path: string): Promise<DomainResult<TextMetadata>> {
   try {
     const stats = await stat(path);
     const hash = createHash("sha256");
     const decoder = new TextDecoder("utf-8", { fatal: true });
-    let pending = "";
     let lineCount = 0;
+    let sawContent = false;
+    let lastCharacter = "";
 
     for await (const chunk of createReadStream(path)) {
       const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
@@ -256,26 +261,32 @@ export async function readTextMetadata(path: string): Promise<DomainResult<TextM
 
       hash.update(buffer);
 
+      let decoded: string;
       try {
-        pending += decoder.decode(buffer, { stream: true });
+        decoded = decoder.decode(buffer, { stream: true });
       } catch {
         return failure("UNSUPPORTED_ENCODING", "File is not valid UTF-8", path);
       }
 
-      const completeLines = pending.match(/[^\n]*\n/g) ?? [];
-      if (completeLines.length > 0) {
-        lineCount += completeLines.length;
-        pending = pending.slice(completeLines.join("").length);
+      if (decoded.length > 0) {
+        sawContent = true;
+        lastCharacter = decoded.at(-1) ?? lastCharacter;
+        lineCount += countNewlines(decoded);
       }
     }
 
     try {
-      pending += decoder.decode();
+      const tail = decoder.decode();
+      if (tail.length > 0) {
+        sawContent = true;
+        lastCharacter = tail.at(-1) ?? lastCharacter;
+        lineCount += countNewlines(tail);
+      }
     } catch {
       return failure("UNSUPPORTED_ENCODING", "File is not valid UTF-8", path);
     }
 
-    if (pending.length > 0) {
+    if (sawContent && lastCharacter !== "\n") {
       lineCount += 1;
     }
 

@@ -143,4 +143,74 @@ describe("patchTool", () => {
       }
     });
   });
+
+  test("streams a unique replacement in an oversized UTF-8 file", async () => {
+    await withTempDir(async (root) => {
+      const filePath = join(root, "large.txt");
+      await writeFile(filePath, `${"alpha\n".repeat(20)}target\n${"omega\n".repeat(20)}`, "utf8");
+
+      const config = createConfig({ roots: [root], maxReadBytes: 12 });
+      const result = await patchTool(
+        {
+          path: "large.txt",
+          old_string: "target",
+          new_string: "patched",
+        },
+        config,
+      );
+
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.data.replacements).toBe(1);
+        expect(result.data.applied).toBe(true);
+        expect(result.data.diff).toBeUndefined();
+      }
+      await expect(readFile(filePath, "utf8")).resolves.toContain("patched\nomega");
+    });
+  });
+
+  test("streams a replacement when the match crosses a read chunk boundary", async () => {
+    await withTempDir(async (root) => {
+      const filePath = join(root, "boundary.txt");
+      const content = `${"x".repeat(65_535)}ABC\n`;
+      await writeFile(filePath, content, "utf8");
+
+      const config = createConfig({ roots: [root], maxReadBytes: 12 });
+      const result = await patchTool(
+        {
+          path: "boundary.txt",
+          old_string: "xABC",
+          new_string: "YABC",
+          occurrence: "unique",
+        },
+        config,
+      );
+
+      expect(result.ok).toBe(true);
+      await expect(readFile(filePath, "utf8")).resolves.toBe(`${"x".repeat(65_534)}YABC\n`);
+    });
+  });
+
+  test("streaming patch rejects ambiguous oversized unique matches", async () => {
+    await withTempDir(async (root) => {
+      const filePath = join(root, "ambiguous-large.txt");
+      await writeFile(filePath, `${"alpha\n".repeat(20)}needle\nneedle\n`, "utf8");
+
+      const config = createConfig({ roots: [root], maxReadBytes: 12 });
+      const result = await patchTool(
+        {
+          path: "ambiguous-large.txt",
+          old_string: "needle",
+          new_string: "patched",
+        },
+        config,
+      );
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error.code).toBe("STRING_NOT_UNIQUE");
+      }
+      await expect(readFile(filePath, "utf8")).resolves.toContain("needle\nneedle\n");
+    });
+  });
 });
