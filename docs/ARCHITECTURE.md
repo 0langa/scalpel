@@ -88,11 +88,20 @@ Current guarantee:
 
 - best-effort atomic replace on the local filesystem through temp-file write plus rename
 - optional strict content-write durability with temp-file flush and best-effort parent-directory flush
-- metadata-only transaction records for text writes, with startup recovery that
-  cleans interrupted temp files and reconciles renamed writes whose target hash
-  already matches the intended post-write hash
-- metadata-only transaction records for `move`, with startup recovery that
-  accepts completed rename records
+- metadata-only transaction records for text writes and `move`, tracking
+  explicit write-progress states (`started`, `temp_written`, `renamed`)
+- startup recovery classifies every scanned record into one of three
+  deterministic decisions: `committed` (target content matches the intended
+  hash regardless of last-persisted state), `aborted` (rename never completed;
+  prior content intact, any temp file cleaned), or `unrecoverable` (on-disk
+  evidence contradicts the record, or the record is corrupted); unrecoverable
+  records are quarantined under `config.transactionDir/quarantine` instead of
+  being retried forever, and the recovery summary is logged to stderr
+- `move` revalidates source, destination, and the destination parent directory
+  immediately before `rename()`, and detects cross-device moves (`EXDEV`),
+  rejecting them with a dedicated error code instead of attempting a copy fallback
+- path-lock contention with a live owner past `SCALPEL_LOCK_TIMEOUT_MS` returns a
+  dedicated `LOCK_TIMEOUT` error instead of hanging or throwing an unstructured error
 
 This is intentionally narrower than a full crash-durability claim:
 platform-specific persistence semantics still need broader proof, and any future
@@ -113,7 +122,7 @@ SDK note: MCP TypeScript SDK `1.29.0` validates `structuredContent` against each
 
 ### Large-file and encoding guards
 
-`src/core/file-metadata.ts` owns UTF-8 classification, binary detection, large-file errors, chunk reads, and ranged streaming reads. Full-text mutators still operate on bounded whole-file snapshots; large edit streaming is future work.
+`src/core/file-metadata.ts` owns UTF-8 classification, binary detection, large-file errors, chunk reads, and ranged streaming reads. `patch`, `append`, and `prepend` stream oversized existing UTF-8 files above `maxReadBytes` through a bounded temp-file rewrite (`src/core/streaming-replace.ts`), including exact matches that span read-chunk boundaries. `batch_edit`, `insert`, `delete_range`, and `replace_between_markers` still operate on bounded whole-file snapshots.
 
 ### Operation journal
 
@@ -213,4 +222,5 @@ The current implementation is production-usable for local testing, but these are
 - expand persistence proof across supported platforms and filesystems
 - expand Kimi regression coverage as new edge cases are found
 - expand smoke coverage as new edge cases are found
-- design streaming edit paths before attempting large mutation workloads
+- extend streaming edit paths to `batch_edit`, `insert`, `delete_range`, and
+  `replace_between_markers`, which still require full-file snapshots
