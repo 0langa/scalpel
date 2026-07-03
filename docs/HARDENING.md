@@ -129,7 +129,9 @@ Hardening reports must include:
 
 - `safety_model_version`: the safety model version from `docs/SAFETY_MODEL.md`
 - `claim_map`: release claims mapped to proof lanes and current status
-- platform/runtime metadata for final release reports
+- `platform`: OS, OS release/version, architecture, Node version, a
+  parent-directory-`fsync` support probe result, and which durability mode
+  (`strict`/`default`) the run exercised
 - required/advisory status for every check
 
 The report claim map is the release audit index. A final `1.0.0` release must

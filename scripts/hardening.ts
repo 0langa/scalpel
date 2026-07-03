@@ -1,7 +1,8 @@
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, open, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
+import { arch, platform, release, version as osVersion } from "node:os";
 import { join, resolve } from "node:path";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -42,6 +43,19 @@ type ToolCall = {
 
 type ToolResult = Awaited<ReturnType<Client["callTool"]>>;
 
+type PlatformInfo = {
+  os: NodeJS.Platform;
+  os_release: string;
+  os_version: string;
+  arch: string;
+  node_version: string;
+  filesystem_probe: {
+    parent_directory_sync_supported: boolean;
+    detail?: string;
+  };
+  durability_mode_tested: string;
+};
+
 type Report = {
   started_at: string;
   ended_at?: string;
@@ -49,6 +63,7 @@ type Report = {
   report_dir: string;
   scalpel_commit?: string;
   safety_model_version: string;
+  platform: PlatformInfo;
   claim_map: ClaimMapEntry[];
   telemetry?: {
     duration_ms: number;
@@ -176,6 +191,7 @@ async function main(): Promise<void> {
     root: hardeningRoot,
     report_dir: reportDir,
     safety_model_version: safetyModelVersion,
+    platform: await probePlatformInfo(),
     claim_map: claimMap,
     corpora: [],
     checks,
@@ -605,6 +621,44 @@ async function runLargeStreamingMutationSuite(): Promise<void> {
       );
     },
   );
+}
+
+async function probePlatformInfo(): Promise<PlatformInfo> {
+  return {
+    os: platform(),
+    os_release: release(),
+    os_version: osVersion(),
+    arch: arch(),
+    node_version: process.version,
+    filesystem_probe: await probeParentDirectorySync(),
+    durability_mode_tested:
+      "strict (SCALPEL_DURABILITY=strict on every spawned hardening MCP client); " +
+      "default mode is covered separately by unit tests in tests/unit/core/write-file-atomic.test.ts",
+  };
+}
+
+async function probeParentDirectorySync(): Promise<{
+  parent_directory_sync_supported: boolean;
+  detail?: string;
+}> {
+  await mkdir(hardeningRoot, { recursive: true });
+  const probeDir = await mkdtemp(join(hardeningRoot, "fs-probe-"));
+  try {
+    const handle = await open(probeDir, "r");
+    try {
+      await handle.sync();
+      return { parent_directory_sync_supported: true };
+    } finally {
+      await handle.close();
+    }
+  } catch (error) {
+    return {
+      parent_directory_sync_supported: false,
+      detail: error instanceof Error ? error.message : String(error),
+    };
+  } finally {
+    await rm(probeDir, { recursive: true, force: true });
+  }
 }
 
 async function readProcessRssBytes(pid: number): Promise<number | undefined> {
@@ -2156,6 +2210,9 @@ function renderMarkdown(report: Report): string {
     `Report: ${report.report_dir}`,
     `Scalpel commit: ${report.scalpel_commit ?? "unknown"}`,
     `Safety model: ${report.safety_model_version}`,
+    `Platform: ${report.platform.os} ${report.platform.os_release} (${report.platform.os_version}), ${report.platform.arch}, Node ${report.platform.node_version}`,
+    `Parent-directory fsync supported: ${String(report.platform.filesystem_probe.parent_directory_sync_supported)}${report.platform.filesystem_probe.detail === undefined ? "" : ` (${report.platform.filesystem_probe.detail})`}`,
+    `Durability mode tested: ${report.platform.durability_mode_tested}`,
     `Required checks: ${String(requiredPassed)}/${String(required.length)} passed`,
     `Advisory checks: ${String(advisoryPassed)}/${String(advisory.length)} passed`,
     ...(report.telemetry === undefined
