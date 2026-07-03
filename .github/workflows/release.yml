@@ -1,0 +1,36 @@
+name: Release Assets
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release version, for example 1.0.0
+        required: true
+        type: string
+
+jobs:
+  build-assets:
+    name: Build release assets
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm validate
+      - run: pnpm pack
+      - name: Generate checksums
+        shell: pwsh
+        run: |
+          Get-FileHash scalpel-${{ inputs.version }}.tgz -Algorithm SHA256 |
+            ForEach-Object { "$($_.Hash.ToLowerInvariant())  $(Split-Path $_.Path -Leaf)" } |
+            Set-Content SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: scalpel-${{ inputs.version }}-release-assets
+          path: |
+            scalpel-${{ inputs.version }}.tgz
+            SHA256SUMS.txt

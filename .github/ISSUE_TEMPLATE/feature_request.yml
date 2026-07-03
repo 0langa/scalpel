@@ -1,0 +1,26 @@
+name: Feature request
+description: Propose a Scalpel improvement
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What workflow or safety gap should this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: What should Scalpel do?
+    validations:
+      required: true
+  - type: textarea
+    id: safety
+    attributes:
+      label: Safety and compatibility
+      description: How should this affect root confinement, journaling, recovery, race safety, or existing tool contracts?
+    validations:
+      required: true

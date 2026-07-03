@@ -1,0 +1,45 @@
+name: Hardening
+
+on:
+  workflow_dispatch:
+    inputs:
+      expanded:
+        description: Run expanded public corpora
+        required: true
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+
+jobs:
+  hardening:
+    name: Hardening (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    env:
+      SCALPEL_HARDENING_ROOT: ${{ runner.temp }}/scalpel-hardening
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - name: Run starter hardening
+        if: ${{ inputs.expanded == 'false' }}
+        run: pnpm hardening:all
+      - name: Run expanded hardening
+        if: ${{ inputs.expanded == 'true' }}
+        run: pnpm hardening:all -- --expanded
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: scalpel-hardening-${{ matrix.os }}
+          path: ${{ env.SCALPEL_HARDENING_ROOT }}/reports
+          if-no-files-found: ignore
