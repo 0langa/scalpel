@@ -1,6 +1,9 @@
 name: Hardening
 
 on:
+  push:
+    branches: [main]
+  pull_request:
   workflow_dispatch:
     inputs:
       expanded:
@@ -33,7 +36,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - name: Run starter hardening
-        if: ${{ inputs.expanded == 'false' }}
+        if: ${{ inputs.expanded != 'true' }}
         run: pnpm hardening:all
       - name: Run expanded hardening
         if: ${{ inputs.expanded == 'true' }}
