@@ -20,6 +20,7 @@ tmp/
 !.github/workflows/**
 !.github/PULL_REQUEST_TEMPLATE.md
 !.github/dependabot.yml
+.github/skills/
 docs/kimi-export-session_-20260603-122048.md
 docs/KIMI_TEST_PROMPT.md
 docs/REVIEW_ACTION_PLAN.md
