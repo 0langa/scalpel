@@ -1,11 +1,14 @@
 name: Release Assets
 
 on:
+  push:
+    tags:
+      - "v*"
   workflow_dispatch:
     inputs:
       version:
-        description: Release version, for example 1.0.0
-        required: true
+        description: Release version, for example 1.0.0 (defaults to the pushed tag)
+        required: false
         type: string
 
 jobs:
@@ -14,6 +17,14 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
+      - name: Resolve version
+        shell: bash
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
+          if [ -z "$VERSION" ]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          fi
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
       - run: corepack enable
       - uses: actions/setup-node@v6
         with:
@@ -25,12 +36,12 @@ jobs:
       - name: Generate checksums
         shell: pwsh
         run: |
-          Get-FileHash scalpel-${{ inputs.version }}.tgz -Algorithm SHA256 |
+          Get-FileHash scalpel-${{ env.VERSION }}.tgz -Algorithm SHA256 |
             ForEach-Object { "$($_.Hash.ToLowerInvariant())  $(Split-Path $_.Path -Leaf)" } |
             Set-Content SHA256SUMS.txt
       - uses: actions/upload-artifact@v7
         with:
-          name: scalpel-${{ inputs.version }}-release-assets
+          name: scalpel-${{ env.VERSION }}-release-assets
           path: |
-            scalpel-${{ inputs.version }}.tgz
+            scalpel-${{ env.VERSION }}.tgz
             SHA256SUMS.txt
