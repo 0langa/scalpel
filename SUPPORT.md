@@ -19,7 +19,7 @@ For safety issues, use `SECURITY.md` instead of a public issue.
 
 For release readiness and hardening status, start with:
 
-- `FINAL_RELEASE_SPRINT.md`
+- `docs/project/FINAL_RELEASE_SPRINT.md`
 - `docs/SAFETY_MODEL.md`
 - `docs/HARDENING.md`
 - `docs/releases/`

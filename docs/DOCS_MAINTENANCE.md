@@ -17,7 +17,7 @@ Use this order:
 Update these docs when a public tool changes:
 
 - `README.md`
-- `SPEC.md`
+- `docs/project/SPEC.md`
 - `docs/TOOL_CONTRACTS.md`
 - `docs/SAFETY_MODEL.md` if safety semantics changed
 - tests under `tests/unit/tools/*` or `tests/integration/*`
