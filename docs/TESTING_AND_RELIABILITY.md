@@ -78,6 +78,8 @@ Reports are written to `tmp/mcp-smoke/<timestamp>/report.md` and `report.json` u
 
 This eval supplements the smoke harness. It is designed to check whether an agent can answer realistic questions through Scalpel tools without mutating the fixture tree.
 
+`evals/mutating/scalpel-mutating-workflow.xml` contains a five-step mutating workflow (inspect, dry run, apply an exact edit, verify hash/content, recover from a stale precondition) that must run against a disposable copy of `scalpel-reliability-suite/`, never the tracked tree. See `evals/README.md` for setup and the journal content-safety check.
+
 ## Hardening Suite
 
 `scripts/hardening.ts` is the first crash/race/corpus hardening harness for the `1.0.0` goal.

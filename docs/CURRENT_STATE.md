@@ -17,7 +17,15 @@ Current implementation focuses on:
 - explicit large-file and binary/encoding guards for text tools
 - optimistic concurrency checks for mutating tools
 - optional operation journaling
-- metadata-only text-write and move transaction recovery at startup
+- metadata-only text-write and move transaction recovery at startup, classifying
+  every record as `committed`, `aborted`, or `unrecoverable` and quarantining
+  corrupted/ambiguous records instead of retrying them forever
+- streaming exact-replacement, append, and prepend for existing UTF-8 files
+  above `maxReadBytes`, via a bounded temp-file rewrite
+- commit-time revalidation for `move` (source, destination, and destination
+  parent directory), with cross-device moves detected via `EXDEV` and rejected
+  with a dedicated error code
+- a structured `LOCK_TIMEOUT` error for path-lock contention with a live owner
 - simple recursive search
 - package smoke coverage for the built `scalpel` bin path
 - read-only MCP resources for core Scalpel docs and live config
@@ -62,7 +70,10 @@ Current implementation does not yet provide:
 | `pnpm format` | Format with Biome |
 | `pnpm test` | Run Vitest tests |
 | `pnpm test:mcp-smoke` | Run built-server MCP smoke harness and write a report |
-| `pnpm validate` | Run lint, typecheck, test, build, and smoke |
+| `pnpm test:package-smoke` | Run packed-tarball install smoke |
+| `pnpm validate` | Run lint, typecheck, test, build, and both smoke harnesses |
+| `pnpm hardening:setup` | Clone starter (or `--expanded`) public corpora |
+| `pnpm hardening:corpus` / `:race` / `:crash` / `:all` | Run individual or all hardening lanes |
 | `pnpm inspector` | Launch MCP inspector |
 
 ## Tool Surface
@@ -121,7 +132,7 @@ first root in `.scalpel-transactions` and runs startup recovery before accepting
 MCP calls. Records include paths, hashes, sizes, and state where relevant, but
 not file content.
 
-`maxDiffBytes` and `logLevel` exist in config but are not widely enforced or wired into runtime behavior yet.
+`logLevel` controls the startup transaction-recovery summary logged to stderr; recovery runs with `unrecoverable` results or warnings are always logged regardless of `logLevel`. `maxDiffBytes` exists in config but is not yet enforced.
 
 ## MCP Resources
 

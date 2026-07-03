@@ -560,13 +560,18 @@ async function runLargeStreamingMutationSuite(): Promise<void> {
   });
 
   await timedCheck(
-    "large streaming: patch keeps scalpel server RSS growth bounded",
+    "large streaming: patch keeps scalpel server RSS growth roughly constant as file size grows",
     "required",
     async () => {
       const root = await freshSyntheticRoot("large-streaming-rss");
-      const filler = "0123456789abcdef\n".repeat(700_000);
-      const filePath = join(root, "rss-large.txt");
-      await writeFile(filePath, `${filler}RSS_TARGET_MARKER\n${filler}`, "utf8");
+      const smallFiller = "0123456789abcdef\n".repeat(90_000);
+      const largeFiller = "0123456789abcdef\n".repeat(700_000);
+      const smallSizeBytes = Buffer.byteLength(smallFiller, "utf8") * 2;
+      const largeSizeBytes = Buffer.byteLength(largeFiller, "utf8") * 2;
+      const smallPath = join(root, "rss-small.txt");
+      const largePath = join(root, "rss-large.txt");
+      await writeFile(smallPath, `${smallFiller}RSS_TARGET_MARKER\n${smallFiller}`, "utf8");
+      await writeFile(largePath, `${largeFiller}RSS_TARGET_MARKER\n${largeFiller}`, "utf8");
 
       const journalPath = join(reportDir, "large-streaming-rss-journal.jsonl");
       const transport = createScalpelTransport(root, journalPath);
@@ -578,45 +583,57 @@ async function runLargeStreamingMutationSuite(): Promise<void> {
 
         const warmup = await client.callTool({ name: "config", arguments: {} });
         assert(warmup.isError !== true, "warm-up call failed");
-
-        const baselineRss = await readProcessRssBytes(pid);
-        assert(baselineRss !== undefined, "could not sample scalpel server memory on this platform");
-
-        const patched = await client.callTool({
-          name: "patch",
-          arguments: {
-            path: "rss-large.txt",
-            old_string: "RSS_TARGET_MARKER",
-            new_string: "RSS_REPLACED_MARKER",
-          },
-        });
-        assert(patched.isError !== true, "large patch failed during RSS check");
-
         await delay(200);
-        const afterRss = await readProcessRssBytes(pid);
-        assert(afterRss !== undefined, "could not resample scalpel server memory on this platform");
 
-        const fileSizeBytes = Buffer.byteLength(filler, "utf8") * 2;
-        const growthBytes = afterRss - baselineRss;
-        // Bounded/streaming edits should not need to hold more than roughly one
-        // file-size-equivalent of transient allocation (decoded chunks, the
-        // matched/replaced output, and the two full read passes for planning and
-        // writing). Full in-memory buffering of old and new content together
-        // would need at least ~2x the file size, so this bound stays well clear
-        // of ordinary GC/allocator noise while still catching non-streaming
-        // regressions.
-        const growthBoundBytes = fileSizeBytes;
+        const beforeSmallRss = await readProcessRssBytes(pid);
+        assert(beforeSmallRss !== undefined, "could not sample scalpel server memory on this platform");
+
+        const smallPatched = await client.callTool({
+          name: "patch",
+          arguments: { path: "rss-small.txt", old_string: "RSS_TARGET_MARKER", new_string: "RSS_REPLACED_MARKER" },
+        });
+        assert(smallPatched.isError !== true, "small streaming patch failed during RSS check");
+        await delay(200);
+
+        const afterSmallRss = await readProcessRssBytes(pid);
+        assert(afterSmallRss !== undefined, "could not resample scalpel server memory on this platform");
+        const smallGrowthBytes = Math.max(0, afterSmallRss - beforeSmallRss);
+
+        const largePatched = await client.callTool({
+          name: "patch",
+          arguments: { path: "rss-large.txt", old_string: "RSS_TARGET_MARKER", new_string: "RSS_REPLACED_MARKER" },
+        });
+        assert(largePatched.isError !== true, "large streaming patch failed during RSS check");
+        await delay(200);
+
+        const afterLargeRss = await readProcessRssBytes(pid);
+        assert(afterLargeRss !== undefined, "could not resample scalpel server memory on this platform");
+        const largeGrowthBytes = Math.max(0, afterLargeRss - afterSmallRss);
+
+        // A file-size-proportional (non-streaming) implementation would need
+        // roughly (largeSizeBytes - smallSizeBytes) of additional memory to
+        // handle a file ~8x bigger. A bounded/streaming implementation's
+        // incremental growth should stay far below that, regardless of
+        // per-call GC/allocator noise, which is what made a single absolute
+        // RSS-growth threshold flaky across platforms (see git history).
+        const sizeDeltaBytes = largeSizeBytes - smallSizeBytes;
+        const incrementalGrowthBoundBytes = smallGrowthBytes + sizeDeltaBytes * 0.4;
         assert(
-          growthBytes < growthBoundBytes,
-          `scalpel server RSS grew by ${String(growthBytes)} bytes streaming a ${String(fileSizeBytes)} byte file`,
+          largeGrowthBytes < incrementalGrowthBoundBytes,
+          `scalpel server RSS grew by ${String(largeGrowthBytes)} bytes going from a ${String(smallSizeBytes)} byte file (growth ${String(smallGrowthBytes)}) to a ${String(largeSizeBytes)} byte file, exceeding the ${String(incrementalGrowthBoundBytes)} byte bound`,
         );
       } finally {
         await Promise.allSettled([client.close(), transport.close()]);
       }
 
-      const updated = await readFile(filePath, "utf8");
+      const updatedSmall = await readFile(smallPath, "utf8");
+      const updatedLarge = await readFile(largePath, "utf8");
       assert(
-        updated === `${filler}RSS_REPLACED_MARKER\n${filler}`,
+        updatedSmall === `${smallFiller}RSS_REPLACED_MARKER\n${smallFiller}`,
+        "small patch content mismatch during RSS check",
+      );
+      assert(
+        updatedLarge === `${largeFiller}RSS_REPLACED_MARKER\n${largeFiller}`,
         "large patch content mismatch during RSS check",
       );
     },

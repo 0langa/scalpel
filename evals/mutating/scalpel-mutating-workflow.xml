@@ -1,0 +1,27 @@
+<evaluation>
+  <task>
+    <id>inspect-file</id>
+    <goal>Inspect fixtures/tiny.txt using the stat and read tools. Report its exact byte size, line count, and full content.</goal>
+    <expected_outcome>size_bytes is 5, line_count is 1, content is exactly "tiny\n". No file is modified.</expected_outcome>
+  </task>
+  <task>
+    <id>dry-run-preview</id>
+    <goal>Using patch with dry_run true, preview replacing the unique line "debug = false" with "debug = true" in config/settings.ini. Report the unified diff Scalpel returns, but do not apply the change.</goal>
+    <expected_outcome>The tool result has applied: false and dry_run: true, and includes a unified diff showing the single-line change. config/settings.ini on disk is byte-for-byte unchanged after this step.</expected_outcome>
+  </task>
+  <task>
+    <id>apply-exact-edit</id>
+    <goal>Apply the same replacement for real: use patch (without dry_run) to replace "debug = false" with "debug = true" in config/settings.ini, relying on the default unique occurrence.</goal>
+    <expected_outcome>The tool result has applied: true and replacements: 1. config/settings.ini now contains exactly one line "debug = true" and is otherwise unchanged from the original.</expected_outcome>
+  </task>
+  <task>
+    <id>verify-hash-content</id>
+    <goal>Call stat on config/settings.ini and confirm its reported sha256 matches the sha256 returned by the preceding patch call. Then read the file back and confirm the content matches what patch was expected to produce.</goal>
+    <expected_outcome>The sha256 from stat equals the sha256 returned by patch. The re-read content contains "debug = true" and no other differences from the original file.</expected_outcome>
+  </task>
+  <task>
+    <id>recover-from-stale-precondition</id>
+    <goal>Attempt to patch config/settings.ini again, replacing "log_level = INFO" with "log_level = DEBUG", but pass expected_sha256 equal to the file's ORIGINAL hash from before apply-exact-edit (not its current hash). After that call fails, re-read the file to get its current sha256, then reissue the same patch with the correct expected_sha256 and confirm it succeeds.</goal>
+    <expected_outcome>The first attempt fails with structuredContent.error.code CONCURRENCY_CONFLICT and does not modify the file. The second attempt, using the freshly observed sha256, succeeds with applied: true, and the file now also contains "log_level = DEBUG" instead of "log_level = INFO", with the debug = true change from apply-exact-edit still intact.</expected_outcome>
+  </task>
+</evaluation>
