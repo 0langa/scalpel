@@ -82,7 +82,7 @@ git switch -c cdx/final-release-sprint
 External hardening workspace:
 
 ```powershell
-C:\Users\Julius\source\repos\scalpel_functionality\scalpel-hardening
+C:\Users\Julius\source\repos\sandbox\scalpel_functionality\scalpel-hardening
 ```
 
 ## Phase 1: Freeze The 1.0 Safety Contract
@@ -511,8 +511,8 @@ Evidence packaging:
 
 ```powershell
 Compress-Archive `
-  -Path C:\Users\Julius\source\repos\scalpel_functionality\scalpel-hardening\reports\FINAL_REPORT_DIR\* `
-  -DestinationPath C:\Users\Julius\source\repos\scalpel_functionality\scalpel-release\1.0.0\scalpel-1.0.0-evidence.zip
+  -Path C:\Users\Julius\source\repos\sandbox\scalpel_functionality\scalpel-hardening\reports\FINAL_REPORT_DIR\* `
+  -DestinationPath C:\Users\Julius\source\repos\sandbox\scalpel_functionality\scalpel-release\1.0.0\scalpel-1.0.0-evidence.zip
 ```
 
 Checksum generation:
@@ -672,8 +672,8 @@ git ls-remote --tags origin v1.0.0
 Fresh install smoke from release asset:
 
 ```powershell
-mkdir C:\Users\Julius\source\repos\scalpel_functionality\install-smoke-1.0.0
-cd C:\Users\Julius\source\repos\scalpel_functionality\install-smoke-1.0.0
+mkdir C:\Users\Julius\source\repos\sandbox\scalpel_functionality\install-smoke-1.0.0
+cd C:\Users\Julius\source\repos\sandbox\scalpel_functionality\install-smoke-1.0.0
 pnpm init
 pnpm add https://github.com/0langa/scalpel/releases/download/v1.0.0/scalpel-1.0.0.tgz
 node node_modules/scalpel/dist/index.js
