@@ -2,10 +2,10 @@
 
 ## Working Agreements
 
-- Use RECALL before substantial Scalpel work so project memory and current release state are considered.
-- Use official OpenAI Developers docs for Codex, OpenAI API, and OpenAI MCP behavior.
-- Use the local mcp-builder guidance for MCP server design, tool contracts, and eval work.
-- Run `pnpm validate` before claiming implementation work is complete.
+- Use RECALL before substantial Scalpel work, so project memory and release state are considered.
+- Use official OpenAI Developers docs for Codex, OpenAI API, OpenAI MCP behavior.
+- Use local mcp-builder guidance for MCP server design, tool contracts, eval work.
+- Run `pnpm validate` before claiming implementation work complete.
 
 ## Safety Rules
 
@@ -16,8 +16,8 @@
 
 ## Local Commands
 
-- `pnpm dev` runs the TypeScript stdio server.
-- `pnpm build` compiles the package entry in `dist/`.
-- `pnpm test:mcp-smoke` checks the built MCP server behavior.
-- `pnpm test:package-smoke` checks the package `scalpel` bin path.
-- `pnpm validate` is the completion gate.
+- `pnpm dev` runs TypeScript stdio server.
+- `pnpm build` compiles package entry in `dist/`.
+- `pnpm test:mcp-smoke` checks built MCP server behavior.
+- `pnpm test:package-smoke` checks package `scalpel` bin path.
+- `pnpm validate` is completion gate.

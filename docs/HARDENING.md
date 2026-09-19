@@ -7,7 +7,7 @@ It writes all cloned public corpora, synthetic workspaces, journals, and reports
 outside the repo by default:
 
 ```text
-C:\Users\Julius\source\repos\scalpel_functionality\scalpel-hardening
+C:\Users\Julius\source\repos\sandbox\scalpel_functionality\scalpel-hardening
 ```
 
 ## Commands

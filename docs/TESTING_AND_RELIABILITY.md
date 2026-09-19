@@ -84,7 +84,7 @@ This eval supplements the smoke harness. It is designed to check whether an agen
 
 `scripts/hardening.ts` is the first crash/race/corpus hardening harness for the `1.0.0` goal.
 
-It clones public starter corpora under `C:\Users\Julius\source\repos\scalpel_functionality\scalpel-hardening`, launches Scalpel through MCP, and writes machine-readable reports outside the repo. See `docs/HARDENING.md`.
+It clones public starter corpora under `C:\Users\Julius\source\repos\sandbox\scalpel_functionality\scalpel-hardening`, launches Scalpel through MCP, and writes machine-readable reports outside the repo. See `docs/HARDENING.md`.
 
 ## Reliability Suite Role
 

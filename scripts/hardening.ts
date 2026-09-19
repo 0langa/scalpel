@@ -96,7 +96,7 @@ const command = parseCommand(process.argv[2]);
 const hardeningRoot = resolve(
   argValue("--root") ??
     process.env.SCALPEL_HARDENING_ROOT ??
-    "C:\\Users\\Julius\\source\\repos\\scalpel_functionality\\scalpel-hardening",
+    "C:\\Users\\Julius\\source\\repos\\sandbox\\scalpel_functionality\\scalpel-hardening",
 );
 const corpora = hasArg("--expanded") ? expandedCorpora : starterCorpora;
 const reportStamp = new Date().toISOString().replace(/[:.]/g, "-");
