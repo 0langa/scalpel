@@ -1,3 +1,4 @@
+import type { Stats } from "node:fs";
 import { open, readFile, stat } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { TextDecoder } from "node:util";
@@ -44,7 +45,19 @@ export async function readChunkTool(
     return failure("INVALID_INPUT", "offset_bytes must be >= 0 and max_bytes must be positive", resolved.data);
   }
 
-  const stats = await stat(resolved.data);
+  let stats: Stats;
+  try {
+    stats = await stat(resolved.data);
+  } catch (error) {
+    return failure(
+      "FILE_NOT_FOUND",
+      error instanceof Error ? error.message : `Unable to read ${resolved.data}`,
+      resolved.data
+    );
+  }
+  if (stats.isDirectory()) {
+    return failure("INVALID_INPUT", "read_chunk requires a file, not a directory", resolved.data);
+  }
   if (offset > stats.size) {
     return failure("INVALID_INPUT", "offset_bytes is beyond end of file", resolved.data, {
       offset_bytes: offset,
@@ -83,8 +96,10 @@ export async function readChunkTool(
     };
 
     if (stats.size <= config.maxReadBytes) {
+      // Hash the bytes (as stat does), not a decoded string: invalid UTF-8
+      // elsewhere in the file would otherwise be hashed as U+FFFD.
       const wholeFile = await readFile(resolved.data);
-      result.sha256 = createHash("sha256").update(wholeFile.toString("utf8")).digest("hex");
+      result.sha256 = createHash("sha256").update(wholeFile).digest("hex");
     }
 
     return success(result);

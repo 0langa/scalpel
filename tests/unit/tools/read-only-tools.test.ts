@@ -212,6 +212,36 @@ describe("read-only tools", () => {
     });
   });
 
+  test("read_chunk returns domain errors for missing files and directories", async () => {
+    await withTempDir(async (root) => {
+      await mkdir(join(root, "folder"));
+
+      const config = createConfig({ roots: [root] });
+      const missing = await readChunkTool({ path: "missing.txt" }, config);
+      const directory = await readChunkTool({ path: "folder" }, config);
+
+      expect(missing).toMatchObject({ ok: false, error: { code: "FILE_NOT_FOUND" } });
+      expect(directory).toMatchObject({ ok: false, error: { code: "INVALID_INPUT" } });
+    });
+  });
+
+  test("read_chunk hashes file bytes the same way stat does", async () => {
+    await withTempDir(async (root) => {
+      // Valid UTF-8 at the start, invalid byte later in the file.
+      await writeFile(join(root, "mixed.txt"), Buffer.from([0x61, 0x62, 0x0a, 0xff, 0x0a]));
+
+      const config = createConfig({ roots: [root] });
+      const chunk = await readChunkTool({ path: "mixed.txt", max_bytes: 3 }, config);
+      const stat = await statTool({ path: "mixed.txt" }, config);
+
+      expect(chunk.ok && stat.ok).toBe(true);
+      if (chunk.ok && stat.ok) {
+        expect(chunk.data.content).toBe("ab\n");
+        expect(chunk.data.sha256).toBe(stat.data.sha256);
+      }
+    });
+  });
+
   test("text tools reject binary and invalid UTF-8 files", async () => {
     await withTempDir(async (root) => {
       await writeFile(join(root, "binary.dat"), Buffer.from([0, 1, 2]));
