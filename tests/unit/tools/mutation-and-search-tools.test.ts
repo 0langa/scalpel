@@ -776,6 +776,27 @@ describe("mutation and search tools", () => {
     });
   });
 
+  test.skipIf(skipWithoutFileSymlinks)("journal never appends through a symlinked journal path", async () => {
+    await withTempDir(async (root) => {
+      await withTempDir(async (outside) => {
+        const outsideFile = join(outside, "profile.sh");
+        const journalPath = join(root, ".scalpel-journal.jsonl");
+        await writeFile(outsideFile, "export KEEP=1\n", "utf8");
+        await symlink(outsideFile, journalPath, "file");
+        await writeFile(join(root, "notes.txt"), "alpha\n", "utf8");
+
+        const config = createConfig({ roots: [root], journalEnabled: true });
+        const result = await appendTool({ path: "notes.txt", content: "beta\n" }, config);
+
+        expect(result.ok).toBe(true);
+        if (result.ok) {
+          expect(result.data.warnings).toEqual(["JOURNAL_WRITE_FAILED: journal path is a symlink"]);
+        }
+        await expect(readFile(outsideFile, "utf8")).resolves.toBe("export KEEP=1\n");
+      });
+    });
+  });
+
   test("grep returns a domain error for invalid regex patterns", async () => {
     await withTempDir(async (root) => {
       await mkdir(join(root, "src"), { recursive: true });
