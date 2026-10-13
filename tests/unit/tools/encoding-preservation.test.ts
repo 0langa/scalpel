@@ -127,6 +127,19 @@ describe("UTF-8 BOM preservation", () => {
     });
   });
 
+  test("insert after the last line of a BOM file without a trailing newline", async () => {
+    await withTempDir(async (root) => {
+      const filePath = join(root, "bom.txt");
+      await writeFile(filePath, `${BOM}only`, "utf8");
+
+      const config = createConfig({ roots: [root] });
+      const result = await insertTool({ path: "bom.txt", content: "next", line: 2 }, config);
+
+      expect(result.ok).toBe(true);
+      await expect(readFile(filePath, "utf8")).resolves.toBe(`${BOM}only\nnext\n`);
+    });
+  });
+
   test("grep anchors match line 1 of a BOM file and report text without the BOM", async () => {
     await withTempDir(async (root) => {
       await writeFile(join(root, "bom.ts"), `${BOM}export const a = 1;\n`, "utf8");
@@ -138,6 +151,53 @@ describe("UTF-8 BOM preservation", () => {
       if (result.ok) {
         expect(result.data.matches).toMatchObject([{ line: 1, content: "export const a = 1;" }]);
       }
+    });
+  });
+});
+
+describe("line structure preservation", () => {
+  test("insert after a final line without a newline does not glue lines together", async () => {
+    await withTempDir(async (root) => {
+      const filePath = join(root, "no-eol.txt");
+      await writeFile(filePath, "a\nb", "utf8");
+
+      const config = createConfig({ roots: [root] });
+      const result = await insertTool({ path: "no-eol.txt", content: "c", line: 3 }, config);
+
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.data.inserted_at_line).toBe(3);
+      }
+      await expect(readFile(filePath, "utf8")).resolves.toBe("a\nb\nc\n");
+    });
+  });
+
+  test("insert after a marker on a final CRLF line without a newline uses CRLF", async () => {
+    await withTempDir(async (root) => {
+      const filePath = join(root, "crlf.txt");
+      await writeFile(filePath, "first\r\n// END", "utf8");
+
+      const config = createConfig({ roots: [root] });
+      const result = await insertTool(
+        { path: "crlf.txt", content: "appended", after_marker: "// END" },
+        config,
+      );
+
+      expect(result.ok).toBe(true);
+      await expect(readFile(filePath, "utf8")).resolves.toBe("first\r\n// END\r\nappended\r\n");
+    });
+  });
+
+  test("inserting empty content leaves a file without a trailing newline untouched", async () => {
+    await withTempDir(async (root) => {
+      const filePath = join(root, "no-eol.txt");
+      await writeFile(filePath, "a\nb", "utf8");
+
+      const config = createConfig({ roots: [root] });
+      const result = await insertTool({ path: "no-eol.txt", content: "", line: 3 }, config);
+
+      expect(result.ok).toBe(true);
+      await expect(readFile(filePath, "utf8")).resolves.toBe("a\nb");
     });
   });
 });
