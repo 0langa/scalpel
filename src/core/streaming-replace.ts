@@ -61,7 +61,7 @@ export async function* streamExactReplaceChunks(input: {
   newString: string;
   mode: ReplacementMode;
 }): AsyncIterable<string> {
-  const decoder = new TextDecoder("utf-8", { fatal: true });
+  const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
   const carryLength = Math.max(0, input.oldString.length - 1);
   let pending = "";
   let seen = 0;
@@ -111,7 +111,7 @@ async function countStreamingMatches(
   oldString: string,
 ): Promise<DomainResult<number>> {
   try {
-    const decoder = new TextDecoder("utf-8", { fatal: true });
+    const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
     const carryLength = Math.max(0, oldString.length - 1);
     let pending = "";
     let matches = 0;

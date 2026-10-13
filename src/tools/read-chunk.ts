@@ -110,7 +110,7 @@ function decodeLargestUtf8Prefix(
   maxBytes: number,
   path: string
 ): DomainResult<{ content: string; bytesUsed: number }> {
-  const decoder = new TextDecoder("utf-8", { fatal: true });
+  const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
   const capped = buffer.subarray(0, Math.min(buffer.length, maxBytes));
 
   for (let length = capped.length; length >= Math.max(0, capped.length - 4); length -= 1) {

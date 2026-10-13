@@ -6,6 +6,7 @@ import { type ScalpelConfig } from "../core/config.js";
 import { failure, success, type DomainResult } from "../core/errors.js";
 import { readFileSnapshot } from "../core/file-metadata.js";
 import { resolveWorkspacePath, toRelativeDisplayPath } from "../core/path-policy.js";
+import { splitBom } from "../core/text.js";
 
 type GrepInput = {
   path: string;
@@ -142,7 +143,8 @@ export async function grepTool(
         return true;
       }
 
-      const lines = snapshot.data.content.split(/\r\n|\n/);
+      // Match text, not the encoding signature: `^pattern` must work on line 1.
+      const lines = splitBom(snapshot.data.content).body.split(/\r\n|\n/);
       for (const [index, line] of lines.entries()) {
         const matched = matcher === null ? line.includes(input.pattern) : matcher.test(line);
         if (matched) {

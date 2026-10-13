@@ -97,7 +97,7 @@ export async function readLineRangeSnapshot(
   try {
     const stats = await stat(path);
     const hash = createHash("sha256");
-    const decoder = new TextDecoder("utf-8", { fatal: true });
+    const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
     let pending = "";
     let content = "";
     let lineCount = 0;
@@ -248,7 +248,7 @@ export async function readTextMetadata(path: string): Promise<DomainResult<TextM
   try {
     const stats = await stat(path);
     const hash = createHash("sha256");
-    const decoder = new TextDecoder("utf-8", { fatal: true });
+    const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
     let lineCount = 0;
     let sawContent = false;
     let lastCharacter = "";

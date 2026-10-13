@@ -3,6 +3,17 @@ import { countLines } from "./line-endings.js";
 
 export type PatchOccurrence = "unique" | "first" | "all" | number;
 
+export const UTF8_BOM = "﻿";
+
+// A UTF-8 byte order mark is file-level encoding metadata, not part of line 1.
+// Line-oriented edits split it off so inserted lines never land in front of it
+// (which would push the BOM into the middle of the file as a stray U+FEFF).
+export function splitBom(content: string): { bom: string; body: string } {
+  return content.startsWith(UTF8_BOM)
+    ? { bom: UTF8_BOM, body: content.slice(UTF8_BOM.length) }
+    : { bom: "", body: content };
+}
+
 export function splitLinesWithEndings(content: string): string[] {
   if (content.length === 0) {
     return [];

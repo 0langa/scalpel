@@ -8,6 +8,7 @@ import { resolveWorkspacePath } from "../core/path-policy.js";
 import {
   findLineMarkerIndex,
   normalizeLineInsertion,
+  splitBom,
   splitLinesWithEndings,
 } from "../core/text.js";
 
@@ -62,7 +63,8 @@ export async function insertTool(
       return snapshot;
     }
 
-    const lines = splitLinesWithEndings(snapshot.data.content);
+    const { bom, body } = splitBom(snapshot.data.content);
+    const lines = splitLinesWithEndings(body);
     let insertIndex: number;
 
     if (input.line !== undefined) {
@@ -90,7 +92,7 @@ export async function insertTool(
 
     const eol = snapshot.data.eol === "\r\n" ? "\r\n" : "\n";
     const insertionLines = normalizeLineInsertion(input.content, eol);
-    const nextContent = [
+    const nextContent = bom + [
       ...lines.slice(0, insertIndex),
       ...insertionLines,
       ...lines.slice(insertIndex),
