@@ -29,7 +29,7 @@ jobs:
         shell: bash
         run: echo "SCALPEL_HARDENING_ROOT=${{ runner.temp }}/scalpel-hardening" >> "$GITHUB_ENV"
       - run: corepack enable
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: pnpm
