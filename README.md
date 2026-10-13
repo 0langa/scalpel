@@ -187,7 +187,6 @@ Full definitions live in [docs/SAFETY_MODEL.md](./docs/SAFETY_MODEL.md) (safety 
 - [docs/releases/2026-07-03-v1.0.0.md](./docs/releases/2026-07-03-v1.0.0.md)
 - [docs/releases/2026-07-03-v1.0.0-audit.md](./docs/releases/2026-07-03-v1.0.0-audit.md)
 - [evals/README.md](./evals/README.md)
-- [CONTRIBUTING.md](./CONTRIBUTING.md)
 - [SECURITY.md](./SECURITY.md)
 - [SUPPORT.md](./SUPPORT.md)
 - [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md)
@@ -195,7 +194,5 @@ Full definitions live in [docs/SAFETY_MODEL.md](./docs/SAFETY_MODEL.md) (safety 
 Internal/project-history reference (handbook, roadmap, spec, sprint plan):
 
 - [docs/project/SCALPEL_MASTER_HANDBOOK.md](./docs/project/SCALPEL_MASTER_HANDBOOK.md)
-- [docs/project/DEVELOPER_ROADMAP.md](./docs/project/DEVELOPER_ROADMAP.md)
-- [docs/project/SCALPEL_AGENT_CONTEXT.md](./docs/project/SCALPEL_AGENT_CONTEXT.md)
 - [docs/project/SPEC.md](./docs/project/SPEC.md)
 - [docs/project/FINAL_RELEASE_SPRINT.md](./docs/project/FINAL_RELEASE_SPRINT.md)

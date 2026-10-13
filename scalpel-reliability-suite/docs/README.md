@@ -48,7 +48,6 @@ Use this project to test MCP tools such as:
 
 ## Contributing
 
-See [CONTRIBUTING.md](./CONTRIBUTING.md) for guidelines.
 
 ## API Reference
 
