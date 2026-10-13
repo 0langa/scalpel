@@ -1,8 +1,9 @@
 import type { McpServer, ToolCallback } from "@modelcontextprotocol/sdk/server/mcp.js";
-import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
+import type { CallToolResult, ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 import * as z from "zod/v4";
 
 import type { ScalpelConfig } from "../core/config.js";
+import { failureFromError } from "../core/errors.js";
 import { appendTool } from "../tools/append.js";
 import { batchEditTool } from "../tools/batch-edit.js";
 import { configTool } from "../tools/config.js";
@@ -21,7 +22,7 @@ import { replaceBetweenMarkersTool } from "../tools/replace-between-markers.js";
 import { statTool } from "../tools/stat.js";
 import { mutatingAnnotations, readOnlyAnnotations } from "./annotations.js";
 import { withErrorOutput } from "./output-schema.js";
-import { toCallToolResult } from "./result.js";
+import { toCallToolResult, toolFailure } from "./result.js";
 
 const pathSchema = z.object({
   path: z.string().min(1)
@@ -42,7 +43,8 @@ function registerScalpelTool<InputSchema extends z.ZodType>(
   options: RegisterToolOptions<InputSchema>,
   handler: ToolCallback<InputSchema>
 ): void {
-  server.registerTool(name, options, handler);
+  const guarded = withStructuredErrors(handler);
+  server.registerTool(name, options, guarded);
   server.registerTool(
     `scalpel_${name}`,
     {
@@ -50,8 +52,26 @@ function registerScalpelTool<InputSchema extends z.ZodType>(
       title: `Scalpel ${options.title ?? name}`,
       description: `Alias of \`${name}\`; prefer this in multi-MCP contexts. ${options.description ?? ""}`.trim()
     },
-    handler
+    guarded
   );
+}
+
+// Tools return domain failures for expected errors, but an unexpected throw
+// (EACCES on a parent directory, ENOSPC, EBUSY, ...) used to reach the SDK,
+// which answers with a bare message and no Scalpel code or
+// structuredContent.error. Keep the documented failure contract for those too.
+function withStructuredErrors<InputSchema extends z.ZodType>(
+  handler: ToolCallback<InputSchema>
+): ToolCallback<InputSchema> {
+  const call = handler as (...args: unknown[]) => CallToolResult | Promise<CallToolResult>;
+  const guarded = async (...args: unknown[]): Promise<CallToolResult> => {
+    try {
+      return await call(...args);
+    } catch (error) {
+      return toolFailure(failureFromError(error));
+    }
+  };
+  return guarded as ToolCallback<InputSchema>;
 }
 
 export function registerTools(server: McpServer, config: ScalpelConfig): void {

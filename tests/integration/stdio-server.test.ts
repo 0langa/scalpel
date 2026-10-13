@@ -154,6 +154,50 @@ describe("stdio server", () => {
     });
   }, 15000);
 
+  test("returns structured error payloads for unexpected filesystem errors", async () => {
+    await withTempDir(async (root) => {
+      await writeFile(join(root, "blocker.txt"), "not a directory\n", "utf8");
+
+      const transport = new StdioClientTransport({
+        command: "node",
+        args: ["--import", "tsx", "src/index.ts"],
+        cwd: process.cwd(),
+        env: {
+          ...process.env,
+          SCALPEL_ROOTS: root
+        },
+        stderr: "pipe"
+      });
+      transports.push(transport);
+
+      const client = new Client({
+        name: "scalpel-test-client",
+        version: "0.1.0"
+      });
+      clients.push(client);
+
+      await client.connect(transport);
+
+      // The parent "directory" is a regular file, so creating it throws EEXIST.
+      const createResult = await client.callTool({
+        name: "create",
+        arguments: {
+          path: "blocker.txt/child.txt",
+          content: "child\n"
+        }
+      });
+
+      expect(createResult.isError).toBe(true);
+      expect(JSON.stringify(createResult.content)).toContain("[IO_ERROR]");
+      expect(createResult.structuredContent).toMatchObject({
+        error: {
+          code: "IO_ERROR",
+          details: { cause_code: "EEXIST" }
+        }
+      });
+    });
+  }, 15000);
+
   test("supports dry-run create and move over MCP without mutating files", async () => {
     await withTempDir(async (root) => {
       const sourcePath = join(root, "source.txt");
