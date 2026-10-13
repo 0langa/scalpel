@@ -65,4 +65,33 @@ describe("readPathStat", () => {
       }
     });
   });
+
+  test("classifies small binary and invalid UTF-8 files instead of failing", async () => {
+    await withTempDir(async (root) => {
+      const binaryBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0x01]);
+      const invalidBytes = Buffer.from([0x61, 0xff, 0x62]);
+      await writeFile(join(root, "image.png"), binaryBytes);
+      await writeFile(join(root, "latin1.txt"), invalidBytes);
+
+      const binary = await readPathStat(join(root, "image.png"), { maxBytes: 1024 });
+      const invalid = await readPathStat(join(root, "latin1.txt"), { maxBytes: 1024 });
+
+      expect(binary.ok).toBe(true);
+      expect(invalid.ok).toBe(true);
+      if (binary.ok && invalid.ok) {
+        expect(binary.data).toMatchObject({
+          textKind: "binary",
+          lineCount: 0,
+          sizeBytes: 6,
+          sha256: createHash("sha256").update(binaryBytes).digest("hex"),
+        });
+        expect(invalid.data).toMatchObject({
+          textKind: "non_utf8",
+          lineCount: 0,
+          sizeBytes: 3,
+          sha256: createHash("sha256").update(invalidBytes).digest("hex"),
+        });
+      }
+    });
+  });
 });

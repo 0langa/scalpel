@@ -349,6 +349,33 @@ describe("mutation and search tools", () => {
     });
   });
 
+  test("move and stat handle small binary files", async () => {
+    await withTempDir(async (root) => {
+      const bytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0x01]);
+      await writeFile(join(root, "logo.png"), bytes);
+
+      const config = createConfig({ roots: [root] });
+      const before = await statTool({ path: "logo.png" }, config);
+      expect(before.ok).toBe(true);
+      if (!before.ok) {
+        return;
+      }
+      expect(before.data.textKind).toBe("binary");
+
+      const result = await moveTool(
+        {
+          source: "logo.png",
+          destination: "assets/logo.png",
+          ...(before.data.sha256 === undefined ? {} : { expected_source_sha256: before.data.sha256 }),
+        },
+        config,
+      );
+
+      expect(result.ok).toBe(true);
+      await expect(readFile(join(root, "assets", "logo.png"))).resolves.toEqual(bytes);
+    });
+  });
+
   test("move dry_run reports plan without renaming", async () => {
     await withTempDir(async (root) => {
       const sourcePath = join(root, "old.txt");

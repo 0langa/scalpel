@@ -217,19 +217,19 @@ export async function readPathStat(
       return metadata;
     }
 
-    const snapshot = await readFileSnapshot(path, options);
-    if (!snapshot.ok) {
-      return snapshot;
-    }
+    // Small files are classified rather than rejected: stat and move must work
+    // on binary and non-UTF-8 files too, not just on text.
+    const buffer = await readFile(path);
+    const textKind = classifyBuffer(buffer);
 
     return success({
       absolutePath: path,
       isDirectory: false,
-      sizeBytes: snapshot.data.sizeBytes,
-      lineCount: snapshot.data.lineCount,
-      sha256: snapshot.data.sha256,
-      mtimeMs: snapshot.data.mtimeMs,
-      textKind: snapshot.data.textKind
+      sizeBytes: buffer.byteLength,
+      lineCount: textKind === "utf8" ? countLines(buffer.toString("utf8")) : 0,
+      sha256: createHash("sha256").update(buffer).digest("hex"),
+      mtimeMs: stats.mtimeMs,
+      textKind
     });
   } catch (error) {
     return failure(
