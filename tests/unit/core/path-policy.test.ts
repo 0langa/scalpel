@@ -3,6 +3,7 @@ import { join, resolve } from "node:path";
 
 import { describe, expect, test } from "vitest";
 
+import { skipWithoutFileSymlinks } from "../../helpers/symlinks.js";
 import { withTempDir } from "../../helpers/temp.js";
 import { resolveWorkspacePath } from "../../../src/core/path-policy.js";
 
@@ -42,7 +43,7 @@ describe("resolveWorkspacePath", () => {
     });
   });
 
-  test("rejects symlink targets inside the workspace", async () => {
+  test.skipIf(skipWithoutFileSymlinks)("rejects symlink targets inside the workspace", async () => {
     await withTempDir(async (root) => {
       const target = join(root, "real.txt");
       const link = join(root, "linked.txt");

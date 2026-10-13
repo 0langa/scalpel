@@ -15,6 +15,7 @@ import { patchTool } from "../../../src/tools/patch.js";
 import { prependTool } from "../../../src/tools/prepend.js";
 import { replaceBetweenMarkersTool } from "../../../src/tools/replace-between-markers.js";
 import { statTool } from "../../../src/tools/stat.js";
+import { skipWithoutFileSymlinks } from "../../helpers/symlinks.js";
 import { withTempDir } from "../../helpers/temp.js";
 
 describe("mutation and search tools", () => {
@@ -966,7 +967,7 @@ describe("mutation and search tools", () => {
     });
   });
 
-  test("mutations reject symlink swaps before commit", async () => {
+  test.skipIf(skipWithoutFileSymlinks)("mutations reject symlink swaps before commit", async () => {
     await withTempDir(async (root) => {
       const filePath = join(root, "symlink-before.txt");
       const targetPath = join(root, "outside-target.txt");
@@ -1003,7 +1004,7 @@ describe("mutation and search tools", () => {
     });
   });
 
-  test("mutations reject symlink swaps after commit", async () => {
+  test.skipIf(skipWithoutFileSymlinks)("mutations reject symlink swaps after commit", async () => {
     await withTempDir(async (root) => {
       const filePath = join(root, "symlink-after.txt");
       const targetPath = join(root, "outside-target-after.txt");
