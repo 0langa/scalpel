@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { lstat, mkdir, rm, symlink } from "node:fs/promises";
+import { constants } from "node:fs";
+import { access, lstat, mkdir, rm, symlink } from "node:fs/promises";
 
 import { failure, success, type DomainResult } from "./errors.js";
 import {
@@ -231,6 +232,11 @@ async function validateCommitGuard(input: MutationWriteInput): Promise<DomainRes
     return symlinkCheck;
   }
 
+  const writableCheck = await validateFileIsWritable(input.path);
+  if (!writableCheck.ok) {
+    return writableCheck;
+  }
+
   const current = await readFileSnapshot(input.path, {
     maxBytes: input.maxReadBytes,
     suggestedTool: "read_chunk",
@@ -295,6 +301,11 @@ async function validateStreamingCommitGuard(
     }
 
     return current;
+  }
+
+  const writableCheck = await validateFileIsWritable(input.path);
+  if (!writableCheck.ok) {
+    return writableCheck;
   }
 
   const current = await readPathStat(input.path, { maxBytes: input.maxReadBytes });
@@ -422,6 +433,32 @@ export async function validatePathIsNotSymlink(path: string): Promise<DomainResu
   }
 
   return success(undefined);
+}
+
+// Atomic replacement only needs write access to the directory, so without this
+// check Scalpel would replace files the user marked read-only (and on Windows
+// the rename fails with a raw EPERM). Respect the file's own write permission.
+async function validateFileIsWritable(path: string): Promise<DomainResult<undefined>> {
+  try {
+    await access(path, constants.W_OK);
+  } catch (error) {
+    const code = errorCode(error);
+    if (code === "ENOENT") {
+      // A vanished file is reported by the commit guard's content check.
+      return success(undefined);
+    }
+    return failure("PERMISSION_DENIED", "File is read-only or not writable by this process", path, {
+      ...(code === undefined ? {} : { cause_code: code }),
+    });
+  }
+
+  return success(undefined);
+}
+
+function errorCode(error: unknown): string | undefined {
+  return typeof error === "object" && error !== null && "code" in error && typeof error.code === "string"
+    ? error.code
+    : undefined;
 }
 
 export async function runHardeningInterference(

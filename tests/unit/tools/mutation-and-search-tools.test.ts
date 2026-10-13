@@ -1,4 +1,4 @@
-import { mkdir, readFile, stat, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, stat, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, test } from "vitest";
@@ -916,6 +916,38 @@ describe("mutation and search tools", () => {
       await expect(readFile(filePath, "utf8")).resolves.toMatch(/^(left|right)\n$/u);
     });
   });
+
+  test.skipIf(process.getuid?.() === 0)(
+    "mutations refuse read-only files with PERMISSION_DENIED instead of replacing them",
+    async () => {
+      await withTempDir(async (root) => {
+        const filePath = join(root, "readonly.txt");
+        await writeFile(filePath, "alpha\n", "utf8");
+        await chmod(filePath, 0o444);
+
+        try {
+          const config = createConfig({ roots: [root] });
+          const streaming = createConfig({ roots: [root], maxReadBytes: 4 });
+          const results = [
+            await patchTool({ path: "readonly.txt", old_string: "alpha", new_string: "beta" }, config),
+            await appendTool({ path: "readonly.txt", content: "more\n" }, config),
+            await appendTool({ path: "readonly.txt", content: "more\n" }, streaming),
+          ];
+
+          for (const result of results) {
+            expect(result.ok).toBe(false);
+            if (!result.ok) {
+              expect(result.error.code).toBe("PERMISSION_DENIED");
+            }
+          }
+          await expect(readFile(filePath, "utf8")).resolves.toBe("alpha\n");
+          expect((await stat(filePath)).mode & 0o222).toBe(0);
+        } finally {
+          await chmod(filePath, 0o644);
+        }
+      });
+    },
+  );
 
   test("mutations reject files changed by external interference before commit", async () => {
     await withTempDir(async (root) => {
