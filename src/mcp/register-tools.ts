@@ -179,6 +179,7 @@ export function registerTools(server: McpServer, config: ScalpelConfig): void {
             path: z.string(),
             relativePath: z.string(),
             isDirectory: z.boolean(),
+            isSymlink: z.boolean(),
             sizeBytes: z.number()
           })
         )
@@ -242,7 +243,7 @@ export function registerTools(server: McpServer, config: ScalpelConfig): void {
           z.object({
             path: z.string(),
             relativePath: z.string(),
-            reason: z.enum(["too_large", "binary", "non_utf8", "unreadable"])
+            reason: z.enum(["too_large", "binary", "non_utf8", "unreadable", "symlink"])
           })
         )
       })),

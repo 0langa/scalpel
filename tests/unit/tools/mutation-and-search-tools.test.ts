@@ -1,4 +1,4 @@
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, stat, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, test } from "vitest";
@@ -672,6 +672,38 @@ describe("mutation and search tools", () => {
           "non_utf8",
           "too_large",
         ]);
+      }
+    });
+  });
+
+  test("grep does not follow directory symlinks or junctions out of the workspace", async () => {
+    await withTempDir(async (root) => {
+      await withTempDir(async (outside) => {
+        await mkdir(join(root, "src"), { recursive: true });
+        await writeFile(join(root, "src", "one.ts"), "needle one\n", "utf8");
+        await writeFile(join(outside, "secret.txt"), "needle secret\n", "utf8");
+        await symlink(outside, join(root, "linked"), process.platform === "win32" ? "junction" : "dir");
+
+        const config = createConfig({ roots: [root], maxGrepResults: 10 });
+        const result = await grepTool({ path: ".", pattern: "needle" }, config);
+
+        expect(result.ok).toBe(true);
+        if (result.ok) {
+          expect(result.data.matches.map((match) => match.relativePath)).toEqual(["src/one.ts"]);
+          expect(result.data.skipped_files).toMatchObject([{ relativePath: "linked", reason: "symlink" }]);
+        }
+      });
+    });
+  });
+
+  test("grep fails clearly for a missing search path", async () => {
+    await withTempDir(async (root) => {
+      const config = createConfig({ roots: [root] });
+      const result = await grepTool({ path: "missing", pattern: "needle" }, config);
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error.code).toBe("FILE_NOT_FOUND");
       }
     });
   });

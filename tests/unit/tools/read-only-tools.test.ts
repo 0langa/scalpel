@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, test } from "vitest";
@@ -95,6 +95,59 @@ describe("read-only tools", () => {
 
       if (result.ok) {
         expect(result.data.entries.map((entry) => entry.name)).toEqual(["a-dir", "b-dir", "c.txt"]);
+      }
+    });
+  });
+
+  test("list_dir lists binary and oversized files without reading them", async () => {
+    await withTempDir(async (root) => {
+      await writeFile(join(root, "image.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0, 0, 0, 1]));
+      await writeFile(join(root, "large.txt"), "x".repeat(64), "utf8");
+      await writeFile(join(root, "notes.txt"), "hello\n", "utf8");
+
+      const config = createConfig({ roots: [root], maxReadBytes: 16 });
+      const result = await listDirTool({ path: "." }, config);
+
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.data.entries).toMatchObject([
+          { name: "image.png", isDirectory: false, isSymlink: false, sizeBytes: 8 },
+          { name: "large.txt", isDirectory: false, isSymlink: false, sizeBytes: 64 },
+          { name: "notes.txt", isDirectory: false, isSymlink: false, sizeBytes: 6 },
+        ]);
+      }
+    });
+  });
+
+  test("list_dir reports symlinks and junctions without following them", async () => {
+    await withTempDir(async (root) => {
+      await withTempDir(async (outside) => {
+        await writeFile(join(outside, "secret.txt"), "secret\n", "utf8");
+        await symlink(outside, join(root, "linked"), process.platform === "win32" ? "junction" : "dir");
+
+        const config = createConfig({ roots: [root] });
+        const result = await listDirTool({ path: "." }, config);
+
+        expect(result.ok).toBe(true);
+        if (result.ok) {
+          expect(result.data.entries).toMatchObject([
+            { name: "linked", isDirectory: false, isSymlink: true },
+          ]);
+        }
+      });
+    });
+  });
+
+  test("list_dir rejects a file path with INVALID_INPUT", async () => {
+    await withTempDir(async (root) => {
+      await writeFile(join(root, "notes.txt"), "hello\n", "utf8");
+
+      const config = createConfig({ roots: [root] });
+      const result = await listDirTool({ path: "notes.txt" }, config);
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error.code).toBe("INVALID_INPUT");
       }
     });
   });

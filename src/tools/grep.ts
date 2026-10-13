@@ -1,4 +1,5 @@
-import { readdir, stat } from "node:fs/promises";
+import type { Stats } from "node:fs";
+import { lstat, readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 
 import { type ScalpelConfig } from "../core/config.js";
@@ -38,9 +39,11 @@ type GrepResult = {
   skipped_files: {
     path: string;
     relativePath: string;
-    reason: "too_large" | "binary" | "non_utf8" | "unreadable";
+    reason: SkipReason;
   }[];
 };
+
+type SkipReason = "too_large" | "binary" | "non_utf8" | "unreadable" | "symlink";
 
 export async function grepTool(
   input: GrepInput,
@@ -78,6 +81,16 @@ export async function grepTool(
     }
   }
 
+  try {
+    await lstat(resolved.data);
+  } catch (error) {
+    return failure(
+      "FILE_NOT_FOUND",
+      error instanceof Error ? error.message : `Unable to search ${resolved.data}`,
+      resolved.data
+    );
+  }
+
   await visit(
     resolved.data,
     config,
@@ -87,6 +100,16 @@ export async function grepTool(
       }
       const relativePath = `${toRelativeDisplayPath(displayRoot, directoryPath)}/`;
       return !excludedByGlobs(relativePath, excludePatterns);
+    },
+    (skippedPath, reason) => {
+      const relativePath = toRelativeDisplayPath(displayRoot, skippedPath);
+      if (
+        excludedByGlobs(relativePath, excludePatterns) ||
+        excludedByGlobs(`${relativePath}/`, excludePatterns)
+      ) {
+        return;
+      }
+      skippedFiles.push({ path: skippedPath, relativePath, reason });
     },
     async (filePath) => {
     if (hasMore) {
@@ -167,7 +190,7 @@ export async function grepTool(
   });
 }
 
-function skipReason(code: string): GrepResult["skipped_files"][number]["reason"] {
+function skipReason(code: string): SkipReason {
   if (code === "FILE_TOO_LARGE") {
     return "too_large";
   }
@@ -180,27 +203,53 @@ function skipReason(code: string): GrepResult["skipped_files"][number]["reason"]
   return "unreadable";
 }
 
+// Traversal never follows symlinks or junctions: their targets can sit outside
+// the configured roots, which every other tool already refuses to touch.
 async function visit(
   path: string,
   config: ScalpelConfig,
   onDirectory: (directoryPath: string) => boolean,
+  onSkipped: (skippedPath: string, reason: SkipReason) => void,
   onFile: (filePath: string) => Promise<boolean>
 ): Promise<boolean> {
-  const info = await stat(path);
+  let info: Stats;
+  try {
+    info = await lstat(path);
+  } catch {
+    onSkipped(path, "unreadable");
+    return true;
+  }
+
+  if (info.isSymbolicLink()) {
+    onSkipped(path, "symlink");
+    return true;
+  }
+
   if (info.isDirectory()) {
     if (!onDirectory(path)) {
       return true;
     }
-    const children = await readdir(path);
+    let children: string[];
+    try {
+      children = await readdir(path);
+    } catch {
+      onSkipped(path, "unreadable");
+      return true;
+    }
     for (const child of children.sort((left, right) => left.localeCompare(right))) {
       if (!config.allowHiddenPaths && child.startsWith(".")) {
         continue;
       }
-      const shouldContinue = await visit(join(path, child), config, onDirectory, onFile);
+      const shouldContinue = await visit(join(path, child), config, onDirectory, onSkipped, onFile);
       if (!shouldContinue) {
         return false;
       }
     }
+    return true;
+  }
+
+  // FIFOs, sockets, and devices are not text files; reading a FIFO would block.
+  if (!info.isFile()) {
     return true;
   }
 
