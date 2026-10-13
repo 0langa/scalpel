@@ -1,4 +1,4 @@
-import { mkdir, readdir, readFile, rename, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readdir, readFile, rename, stat, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, test } from "vitest";
@@ -10,6 +10,7 @@ import {
   recoverWriteTransactions,
 } from "../../../src/core/write-transaction.js";
 import { withTempDir } from "../../helpers/temp.js";
+import { holdWindowsFileLock } from "../../helpers/windows-lock.js";
 
 describe("writeFileAtomic", () => {
   test("default mode writes through a temp file and leaves no temp files behind", async () => {
@@ -66,6 +67,96 @@ describe("writeFileAtomic", () => {
       await expect(readdir(transactionDir)).resolves.toEqual([]);
     });
   });
+
+  test("a write that fails before rename leaves the target, no temp file, and no record", async () => {
+    await withTempDir(async (root) => {
+      const transactionDir = join(root, ".scalpel-transactions");
+      const filePath = join(root, "target.txt");
+      await writeFile(filePath, "before\n", "utf8");
+
+      async function* failingChunks(): AsyncIterable<string> {
+        yield "partial";
+        await Promise.resolve();
+        throw new Error("disk full");
+      }
+
+      await expect(
+        writeFileAtomicStream(filePath, failingChunks(), {
+          transactionDir,
+          afterSha256: "0".repeat(64),
+          afterSizeBytes: 1,
+        }),
+      ).rejects.toThrow("disk full");
+
+      await expect(readFile(filePath, "utf8")).resolves.toBe("before\n");
+      await expect(readdir(root)).resolves.toEqual([".scalpel-transactions", "target.txt"]);
+      await expect(readdir(transactionDir)).resolves.toEqual([]);
+    });
+  });
+
+  test.skipIf(process.platform === "win32")("replacing a file keeps its permission bits", async () => {
+    await withTempDir(async (root) => {
+      const filePath = join(root, "run.sh");
+      await writeFile(filePath, "#!/bin/sh\necho old\n", "utf8");
+      await chmod(filePath, 0o750);
+
+      await writeFileAtomic(filePath, "#!/bin/sh\necho new\n");
+
+      expect((await stat(filePath)).mode & 0o777).toBe(0o750);
+      await expect(readFile(filePath, "utf8")).resolves.toBe("#!/bin/sh\necho new\n");
+    });
+  });
+
+  test.runIf(process.platform === "win32")(
+    "waits out a transient lock held by another process on Windows",
+    async () => {
+      await withTempDir(async (root) => {
+        const filePath = join(root, "locked.txt");
+        await writeFile(filePath, "before\n", "utf8");
+
+        const lock = await holdWindowsFileLock(filePath, 400);
+        const warnings = await writeFileAtomic(filePath, "after\n");
+        await lock.released;
+
+        expect(warnings).toEqual([]);
+        await expect(readFile(filePath, "utf8")).resolves.toBe("after\n");
+        await expect(readdir(root)).resolves.toEqual(["locked.txt"]);
+      });
+    },
+    20_000,
+  );
+
+  test.runIf(process.platform === "win32")(
+    "gives up after the retry budget and cleans up when the lock is not released",
+    async () => {
+      await withTempDir(async (root) => {
+        const transactionDir = join(root, ".scalpel-transactions");
+        const filePath = join(root, "locked.txt");
+        await writeFile(filePath, "before\n", "utf8");
+        const previousBudget = process.env.SCALPEL_RENAME_RETRY_MS;
+        process.env.SCALPEL_RENAME_RETRY_MS = "50";
+
+        const lock = await holdWindowsFileLock(filePath, 1_500);
+        try {
+          await expect(writeFileAtomic(filePath, "after\n", { transactionDir })).rejects.toMatchObject({
+            code: "EPERM",
+          });
+        } finally {
+          if (previousBudget === undefined) {
+            delete process.env.SCALPEL_RENAME_RETRY_MS;
+          } else {
+            process.env.SCALPEL_RENAME_RETRY_MS = previousBudget;
+          }
+          await lock.released;
+        }
+
+        await expect(readFile(filePath, "utf8")).resolves.toBe("before\n");
+        await expect(readdir(root)).resolves.toEqual([".scalpel-transactions", "locked.txt"]);
+        await expect(readdir(transactionDir)).resolves.toEqual([]);
+      });
+    },
+    20_000,
+  );
 
   test("recovery removes temp-written transaction temps without touching the target", async () => {
     await withTempDir(async (root) => {
