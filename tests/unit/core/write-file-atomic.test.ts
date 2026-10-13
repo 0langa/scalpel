@@ -1,4 +1,4 @@
-import { mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rename, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, test } from "vitest";
@@ -255,6 +255,53 @@ describe("writeFileAtomic", () => {
       const summary = await recoverWriteTransactions(transactionDir);
 
       expect(summary).toMatchObject({ scanned: 1, unrecoverable: 1, quarantined: 1 });
+    });
+  });
+
+  test("recovery never deletes a file that a tampered record names as its temp path", async () => {
+    await withTempDir(async (root) => {
+      await withTempDir(async (outside) => {
+        const transactionDir = join(root, ".scalpel-transactions");
+        const victimPath = join(outside, "precious.txt");
+        await writeFile(victimPath, "keep me\n", "utf8");
+        await mkdir(transactionDir, { recursive: true });
+        await writeFile(
+          join(transactionDir, "tampered.json"),
+          JSON.stringify({
+            version: 1,
+            kind: "text_write",
+            id: "tampered",
+            targetPath: join(root, "target.txt"),
+            tempPath: victimPath,
+            afterSha256: "0".repeat(64),
+            afterSizeBytes: 1,
+            state: "started",
+            updatedAt: new Date().toISOString(),
+          }),
+          "utf8",
+        );
+
+        const summary = await recoverWriteTransactions(transactionDir);
+
+        expect(summary).toMatchObject({ scanned: 1, unrecoverable: 1, quarantined: 1, cleanedTemps: 0 });
+        await expect(readFile(victimPath, "utf8")).resolves.toBe("keep me\n");
+      });
+    });
+  });
+
+  test("recovery refuses to scan a transaction directory that is a symlink or junction", async () => {
+    await withTempDir(async (root) => {
+      await withTempDir(async (outside) => {
+        const transactionDir = join(root, ".scalpel-transactions");
+        await writeFile(join(outside, "settings.json"), "{\"user\": true}\n", "utf8");
+        await symlink(outside, transactionDir, process.platform === "win32" ? "junction" : "dir");
+
+        const summary = await recoverWriteTransactions(transactionDir);
+
+        expect(summary).toMatchObject({ scanned: 0, unrecoverable: 0, quarantined: 0 });
+        expect(summary.warnings).toHaveLength(1);
+        await expect(readdir(outside)).resolves.toEqual(["settings.json"]);
+      });
     });
   });
 });

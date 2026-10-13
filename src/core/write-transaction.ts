@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, open, readdir, readFile, rename, rm, stat } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { lstat, mkdir, open, readdir, readFile, rename, rm, stat } from "node:fs/promises";
+import { basename, dirname, join, resolve } from "node:path";
 
 import { crashIfFaultPoint } from "./fault-injection.js";
 
@@ -164,6 +164,18 @@ export async function recoverWriteTransactions(transactionDir: string): Promise<
     return summary;
   }
 
+  // The default transaction directory lives inside the workspace, so its
+  // contents are not trusted. Never follow a symlink or junction here:
+  // quarantining "corrupted" records would otherwise move or delete JSON files
+  // wherever the link points.
+  const directoryInfo = await lstat(transactionDir);
+  if (directoryInfo.isSymbolicLink() || !directoryInfo.isDirectory()) {
+    summary.warnings.push(
+      "TRANSACTION_RECOVERY_SKIPPED: transaction directory is a symlink or not a directory",
+    );
+    return summary;
+  }
+
   const entries = await readdir(transactionDir, { withFileTypes: true });
   for (const entry of entries) {
     if (!entry.isFile() || !entry.name.endsWith(".json")) {
@@ -238,6 +250,14 @@ async function reconcileRecord(record: WriteTransactionRecord): Promise<Reconcil
 }
 
 async function reconcileTextWriteRecord(record: TextWriteTransactionRecord): Promise<ReconcileResult> {
+  if (!isScalpelTempPathFor(record.targetPath, record.tempPath)) {
+    return {
+      decision: "unrecoverable",
+      cleanedTemp: false,
+      detail: "record temp path is not a Scalpel temp file beside its target; it was left untouched",
+    };
+  }
+
   const targetMatches = await fileMatches(record.targetPath, record.afterSha256, record.afterSizeBytes);
   let cleanedTemp = false;
 
@@ -293,6 +313,17 @@ function reconcileMoveRecord(record: MoveTransactionRecord): Promise<ReconcileRe
     cleanedTemp: false,
     detail: "neither source nor destination exists; move outcome cannot be determined",
   });
+}
+
+// Recovery deletes the temp file a record names, so only accept the names that
+// writeFileAtomicStream() creates: `.scalpel-*.tmp` in the target's directory.
+function isScalpelTempPathFor(targetPath: string, tempPath: string): boolean {
+  const name = basename(tempPath);
+  return (
+    name.startsWith(".scalpel-") &&
+    name.endsWith(".tmp") &&
+    dirname(resolve(tempPath)) === dirname(resolve(targetPath))
+  );
 }
 
 async function quarantineRecord(transactionDir: string, recordPath: string, name: string): Promise<void> {
