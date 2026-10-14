@@ -5,7 +5,7 @@ import { combineWarnings, recordJournal, snapshotState, textState } from "../cor
 import { readSnapshotForMutation, writeTextFileForMutation } from "../core/mutation.js";
 import { withPathLock } from "../core/path-lock.js";
 import { resolveWorkspacePath } from "../core/path-policy.js";
-import { planExactReplace, type PatchOccurrence } from "../core/text.js";
+import { planExactReplace, replacementForStyle, type PatchOccurrence } from "../core/text.js";
 
 type BatchEditInput = {
   path: string;
@@ -61,7 +61,7 @@ export async function batchEditTool(
       const plan = planExactReplace(
         content,
         edit.old_string,
-        edit.new_string,
+        replacementForStyle(edit.old_string, edit.new_string, snapshot.data.eol),
         edit.occurrence ?? "unique",
       );
 

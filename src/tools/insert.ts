@@ -2,6 +2,7 @@ import { type ScalpelConfig } from "../core/config.js";
 import { createUnifiedDiff } from "../core/diff.js";
 import { failure, success, type DomainResult } from "../core/errors.js";
 import { combineWarnings, recordJournal, snapshotState, textState } from "../core/journal.js";
+import { matchLineEndings } from "../core/line-endings.js";
 import { readSnapshotForMutation, writeTextFileForMutation } from "../core/mutation.js";
 import { withPathLock } from "../core/path-lock.js";
 import { resolveWorkspacePath } from "../core/path-policy.js";
@@ -91,7 +92,10 @@ export async function insertTool(
     }
 
     const eol = snapshot.data.eol === "\r\n" ? "\r\n" : "\n";
-    const insertionLines = normalizeLineInsertion(input.content, eol);
+    const insertionLines = normalizeLineInsertion(
+      matchLineEndings(input.content, snapshot.data.eol),
+      eol,
+    );
     const before = lines.slice(0, insertIndex);
     const lastBefore = before.at(-1);
     if (insertionLines.length > 0 && lastBefore !== undefined && !lastBefore.endsWith("\n")) {

@@ -7,7 +7,7 @@ import fc from "fast-check";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 
 import { createConfig, type ScalpelConfig } from "../../../src/core/config.js";
-import { readLineRangeSnapshot } from "../../../src/core/file-metadata.js";
+import { readLineEndingStyle, readLineRangeSnapshot } from "../../../src/core/file-metadata.js";
 import { countLines, detectLineEnding } from "../../../src/core/line-endings.js";
 import {
   planStreamingExactReplace,
@@ -192,6 +192,42 @@ describe("text engine properties", { timeout: 60_000 }, () => {
           await expect(readFile(path, "utf8")).resolves.toBe(
             bom + [...originalLines.slice(0, startLine - 1), ...originalLines.slice(endLine)].join(""),
           );
+        },
+      ),
+      { numRuns: 75 },
+    );
+  });
+
+  test("the streamed line-ending style matches detecting it on the whole file", async () => {
+    await fc.assert(
+      fc.asyncProperty(text, highWaterMark, async (content, chunkBytes) => {
+        const path = await writeTemp(content);
+        const style = await readLineEndingStyle(path, { highWaterMark: chunkBytes });
+
+        expect(style).toEqual({
+          ok: true,
+          data: { eol: detectLineEnding(content), endsWithCr: content.endsWith("\r") },
+        });
+      }),
+      { numRuns: 300 },
+    );
+  });
+
+  test("insert into a single-style file keeps that style", async () => {
+    await fc.assert(
+      fc.asyncProperty(
+        fc.constantFrom("\n", "\r\n"),
+        fc.array(fc.constantFrom("a", "b", "é", "😀"), { minLength: 1, maxLength: 6 }),
+        text,
+        fc.nat(),
+        async (eol, lines, inserted, position) => {
+          const path = await writeTemp(`${lines.join(eol)}${eol}`);
+          const line = (position % (lines.length + 1)) + 1;
+
+          const result = await insertTool({ path, content: inserted, line }, configFor(path));
+
+          expect(result.ok).toBe(true);
+          expect(detectLineEnding(await readFile(path, "utf8"))).toBe(eol);
         },
       ),
       { numRuns: 75 },

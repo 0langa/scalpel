@@ -1,5 +1,5 @@
 import { failure, success, type DomainResult } from "./errors.js";
-import { countLines } from "./line-endings.js";
+import { countLines, matchLineEndings, type LineEnding } from "./line-endings.js";
 
 export type PatchOccurrence = "unique" | "first" | "all" | number;
 
@@ -38,6 +38,17 @@ export function normalizeLineInsertion(content: string, eol: "\n" | "\r\n"): str
 
 export function countInsertedLines(content: string): number {
   return countLines(ensureTrailingLineEnding(content, "\n"));
+}
+
+// new_string takes the line-ending style of the file it is written into. In a
+// CRLF file every LF follows a CR, so an old_string that starts with LF matches
+// right after a CR: a leading LF in new_string then completes that pair again.
+export function replacementForStyle(
+  oldString: string,
+  newString: string,
+  style: LineEnding
+): string {
+  return matchLineEndings(newString, style, oldString.startsWith("\n"));
 }
 
 export function planExactReplace(
