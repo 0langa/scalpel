@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import { access, lstat, mkdir, rm, symlink } from "node:fs/promises";
+import { dirname } from "node:path";
 
 import { failure, success, type DomainResult } from "./errors.js";
 import {
@@ -457,12 +458,22 @@ export async function validatePathIsNotSymlink(path: string): Promise<DomainResu
 
 class TargetChangedError extends Error {}
 
-type TargetIdentity = { dev: number; ino: number; size: number; mtimeMs: number } | "absent";
+type EntryIdentity =
+  | { dev: number; ino: number; size: number; mtimeMs: number; symlink: boolean }
+  | "absent";
 
-async function readTargetIdentity(path: string): Promise<TargetIdentity> {
+type TargetIdentity = { target: EntryIdentity; parent: EntryIdentity };
+
+async function readEntryIdentity(path: string): Promise<EntryIdentity> {
   try {
     const info = await lstat(path);
-    return { dev: info.dev, ino: info.ino, size: info.size, mtimeMs: info.mtimeMs };
+    return {
+      dev: info.dev,
+      ino: info.ino,
+      size: info.size,
+      mtimeMs: info.mtimeMs,
+      symlink: info.isSymbolicLink(),
+    };
   } catch (error) {
     if (errorCode(error) === "ENOENT") {
       return "absent";
@@ -471,20 +482,35 @@ async function readTargetIdentity(path: string): Promise<TargetIdentity> {
   }
 }
 
+async function readTargetIdentity(path: string): Promise<TargetIdentity> {
+  return { target: await readEntryIdentity(path), parent: await readEntryIdentity(dirname(path)) };
+}
+
+function sameEntry(left: EntryIdentity, right: EntryIdentity, compareContent: boolean): boolean {
+  if (left === "absent" || right === "absent") {
+    return left === right;
+  }
+  return (
+    left.dev === right.dev &&
+    left.ino === right.ino &&
+    left.symlink === right.symlink &&
+    (!compareContent || (left.size === right.size && left.mtimeMs === right.mtimeMs))
+  );
+}
+
 // The commit guard checks content before the temp file is written, but writing
 // it (streaming a large file can take seconds) leaves a window in which another
 // process can replace or modify the target, and the rename would silently
 // discard that change. Re-check the target's identity right before the rename.
+// The parent directory is checked by identity only (its mtime changes when the
+// temp file is created): if it, or any ancestor, was swapped for a symlink or
+// junction, lstat() resolves the parent to a different directory.
 async function assertTargetUnchanged(path: string, expected: TargetIdentity): Promise<void> {
   const current = await readTargetIdentity(path);
-  const unchanged =
-    expected === "absent" || current === "absent"
-      ? expected === current
-      : expected.dev === current.dev &&
-        expected.ino === current.ino &&
-        expected.size === current.size &&
-        expected.mtimeMs === current.mtimeMs;
-  if (!unchanged) {
+  if (!sameEntry(expected.parent, current.parent, false)) {
+    throw new TargetChangedError("Parent directory was replaced while Scalpel was writing the file");
+  }
+  if (!sameEntry(expected.target, current.target, true)) {
     throw new TargetChangedError("File changed while Scalpel was writing its replacement");
   }
 }

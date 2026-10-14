@@ -163,7 +163,7 @@ Most full-text mutators reject oversized, binary, or invalid UTF-8 existing file
 Shared write behavior:
 
 - an existing target must be writable by the Scalpel process; read-only files fail with `PERMISSION_DENIED` instead of being replaced through the directory
-- the target's identity (device, inode, size, mtime) is checked again immediately before the rename, so a file that another process modifies or replaces while the replacement is being written (which can take seconds on the streaming paths) fails with `CONCURRENCY_CONFLICT` instead of losing that change
+- the target's identity (device, inode, size, mtime) and its parent directory's identity are checked again immediately before the rename (and before every Windows retry), so a file that another process modifies or replaces while the replacement is being written (which can take seconds on the streaming paths), or a parent directory swapped for a symlink or junction, fails with `CONCURRENCY_CONFLICT` instead of losing that change or writing outside the roots
 - replacing a file keeps its permission bits (for example the executable bit) on POSIX; if that `chmod` is refused the write still succeeds with a `FILE_MODE_NOT_PRESERVED` warning
 - on Windows, a rename blocked because another process holds the target open (antivirus, the search indexer, backup or sync clients, editors) is retried with a short backoff for up to `SCALPEL_RENAME_RETRY_MS` (default `5000`) before failing
 - a UTF-8 BOM stays at offset 0: `insert` and `prepend` add text after it, `delete_range` keeps it, and the streaming paths preserve it
