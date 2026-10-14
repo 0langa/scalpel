@@ -260,6 +260,50 @@ describe("stdio server", () => {
     });
   }, 15000);
 
+  test("an append that grows a file past the default read limit reports success over MCP", async () => {
+    await withTempDir(async (root) => {
+      const filePath = join(root, "log.txt");
+      // 2 bytes under the default 2 MiB maxReadBytes, so the append starts on the in-memory path.
+      const original = "line\n".repeat(419_430);
+      await writeFile(filePath, original, "utf8");
+
+      const transport = new StdioClientTransport({
+        command: "node",
+        args: ["--import", "tsx", "src/index.ts"],
+        cwd: process.cwd(),
+        env: {
+          ...process.env,
+          SCALPEL_ROOTS: root
+        },
+        stderr: "pipe"
+      });
+      transports.push(transport);
+
+      const client = new Client({
+        name: "scalpel-test-client",
+        version: "0.1.0"
+      });
+      clients.push(client);
+
+      await client.connect(transport);
+
+      const appendResult = await client.callTool({
+        name: "append",
+        arguments: {
+          path: "log.txt",
+          content: "appended\n"
+        }
+      });
+
+      expect(appendResult.isError).not.toBe(true);
+      expect(appendResult.structuredContent).toMatchObject({
+        applied: true,
+        new_total_lines: 419_431
+      });
+      await expect(readFile(filePath, "utf8")).resolves.toBe(`${original}appended\n`);
+    });
+  }, 15000);
+
   test("supports dry-run create and move over MCP without mutating files", async () => {
     await withTempDir(async (root) => {
       const sourcePath = join(root, "source.txt");

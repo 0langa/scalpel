@@ -181,7 +181,7 @@ Current guarantees:
 
 ### Large Files And Encoding
 
-Full-text tools stat before reading and reject files larger than `maxReadBytes` with `FILE_TOO_LARGE`. `read_chunk` provides bounded UTF-8-safe byte reads for large files. Text tools reject binary files with `BINARY_FILE_NOT_SUPPORTED` and invalid UTF-8 with `UNSUPPORTED_ENCODING`.
+Full-text tools stat before reading and reject files larger than `maxReadBytes` with `FILE_TOO_LARGE`. The limit applies to the file an edit starts from: an edit that grows a file past it is applied and reports success, because its result comes from the post-commit verification rather than from a second, size-limited read. `read_chunk` provides bounded UTF-8-safe byte reads for large files. Text tools reject binary files with `BINARY_FILE_NOT_SUPPORTED` and invalid UTF-8 with `UNSUPPORTED_ENCODING`.
 
 ### Operation Journal
 

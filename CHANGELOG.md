@@ -15,6 +15,7 @@ All notable changes to Scalpel are documented here.
 
 ### Fixed
 
+- An `append`, `prepend`, `patch`, or `create` that grew a file past `maxReadBytes` was written, but then reported `FILE_TOO_LARGE` because its result came from a second, size-limited read of the file. A client that retried applied the edit twice. Results now describe the file as Scalpel verified it right after the commit.
 - Streaming `patch` on oversized files could split a UTF-16 surrogate pair across output chunks and write astral characters (emoji, ...) as two U+FFFD while reporting success.
 - An edit another process made while Scalpel was writing a replacement (seconds on the streaming paths, or during Windows rename retries) was silently overwritten; it now fails with `CONCURRENCY_CONFLICT`.
 - Names that merely start with two dots (`..cache`, `..notes.txt`) were rejected as outside the root.
