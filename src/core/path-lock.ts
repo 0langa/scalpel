@@ -85,6 +85,13 @@ function lockKeyFor(path: string): string {
   return process.platform === "win32" || process.platform === "darwin" ? path.toLowerCase() : path;
 }
 
+// Name (without `.lock`) of the cross-process lock directory for `path`. Every
+// cooperating process must derive it the same way; the hardening suite uses it
+// to plant locks that a running server has to honour.
+export function lockKeyHash(path: string): string {
+  return hashKey(lockKeyFor(path));
+}
+
 async function acquireFileLock(key: string): Promise<FileLock> {
   const root = lockRoot();
   await mkdir(root, { recursive: true });
