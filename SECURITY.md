@@ -2,13 +2,14 @@
 
 ## Supported Versions
 
-Security fixes are supported for the latest `1.0.x` stable release. Older
-prereleases (`1.0.0-alpha.x`) are no longer supported; upgrade to `1.0.0` or
-later.
+Security fixes are supported for the latest `1.1.x` stable release. Older
+releases (`1.0.x` and the `1.0.0-alpha.x` prereleases) are no longer supported;
+upgrade to `1.1.0` or later.
 
 | Version | Supported |
 | --- | --- |
-| `1.0.x` | yes |
+| `1.1.x` | yes |
+| `1.0.x` | no, upgrade |
 | `1.0.0-alpha.x` | no, upgrade |
 
 ## Reporting A Vulnerability

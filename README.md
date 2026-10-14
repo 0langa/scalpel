@@ -7,9 +7,9 @@ Precise, atomic file editing for code and text over MCP.
 
 ## Status
 
-`1.0.0` stable. Expanded hardening (public-corpus stress, race/interference coverage, and the killed-process fault matrix) passes on Windows and on Linux. Streaming mutation for oversized `patch`/`append`/`prepend` targets, an explicit transaction recovery state machine, and commit-time revalidation for `move` are all implemented and proven.
+`1.1.0` stable. Edits keep each file's line-ending style, and an edit that grows a file past `maxReadBytes` reports success. Expanded hardening (public-corpus stress, race/interference coverage, and the killed-process fault matrix) passed on Windows and on Linux for `1.0.0`; `1.1.0` passes the starter hardening lane on both. Streaming mutation for oversized `patch`/`append`/`prepend` targets, an explicit transaction recovery state machine, and commit-time revalidation for `move` are all implemented and proven.
 
-See [the release notes](./docs/releases/2026-07-03-v1.0.0.md) for the full safety claim, evidence summary, supported platforms, unsupported cases, and migration notes from the alpha.
+See [the 1.1.0 release notes](./docs/releases/2026-10-15-v1.1.0.md) for the changes and upgrade notes since `1.0.0`, and [the 1.0.0 release notes](./docs/releases/2026-07-03-v1.0.0.md) for the full safety claim, evidence summary, supported platforms, and unsupported cases.
 
 ## Implemented Tools
 
@@ -35,7 +35,7 @@ See [the release notes](./docs/releases/2026-07-03-v1.0.0.md) for the full safet
 Install from the GitHub release tarball:
 
 ```bash
-npm install https://github.com/0langa/scalpel/releases/download/v1.0.0/scalpel-1.0.0.tgz
+npm install https://github.com/0langa/scalpel/releases/download/v1.1.0/scalpel-1.1.0.tgz
 node node_modules/scalpel/dist/index.js
 ```
 
@@ -193,8 +193,9 @@ Full definitions live in [docs/SAFETY_MODEL.md](./docs/SAFETY_MODEL.md) (safety 
 - [docs/DOCS_MAINTENANCE.md](./docs/DOCS_MAINTENANCE.md)
 - [docs/HARDENING.md](./docs/HARDENING.md)
 - [docs/STACK.md](./docs/STACK.md)
+- [docs/releases/2026-10-15-v1.1.0.md](./docs/releases/2026-10-15-v1.1.0.md)
+- [docs/releases/2026-10-15-v1.1.0-audit.md](./docs/releases/2026-10-15-v1.1.0-audit.md)
 - [docs/releases/2026-07-03-v1.0.0.md](./docs/releases/2026-07-03-v1.0.0.md)
-- [docs/releases/2026-07-03-v1.0.0-audit.md](./docs/releases/2026-07-03-v1.0.0-audit.md)
 - [evals/README.md](./evals/README.md)
 - [SECURITY.md](./SECURITY.md)
 - [SUPPORT.md](./SUPPORT.md)
