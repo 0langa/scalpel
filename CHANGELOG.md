@@ -6,7 +6,7 @@ All notable changes to Scalpel are documented here.
 
 ### Security
 
-- Startup recovery no longer trusts records in the in-workspace transaction directory: it only deletes `.scalpel-*.tmp` files beside the record's target (a crafted record could delete any file before) and does not scan a symlinked or junctioned transaction directory (which could move or delete unrelated `*.json` files).
+- Startup recovery no longer trusts records in the in-workspace transaction directory: it only deletes `.scalpel-*.tmp` files beside the record's target (a crafted record could delete any file before) and does not scan a symlinked or junctioned transaction directory (which could move or delete unrelated `*.json` files). Records that name paths outside the configured roots, directly or through a link, are left untouched, and records are never quarantined through a linked `quarantine` directory.
 - `grep` no longer follows symlinks or junctions out of the configured roots; links are reported in `skipped_files` with reason `symlink` (a configured root that is itself a link is still searched).
 - The operation journal is never appended through a symlink.
 - Writes and moves now re-resolve their directories when they commit and recheck the target's and parent's identity right before the rename: a directory created as, or swapped for, a junction after validation could make `create` and `move` write outside the roots (or pull an outside file in) while reporting success.

@@ -1,9 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { lstat, mkdir, open, readdir, readFile, rename, rm, stat } from "node:fs/promises";
-import { basename, dirname, join, resolve } from "node:path";
+import { lstat, mkdir, open, readdir, readFile, realpath, rename, rm, stat } from "node:fs/promises";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 
 import { crashIfFaultPoint } from "./fault-injection.js";
+import { isInside } from "./path-policy.js";
 
 type WriteTransactionState = "started" | "temp_written" | "renamed";
 type MoveTransactionState = "started" | "renamed";
@@ -149,7 +150,17 @@ export async function beginMoveTransaction(input: {
   };
 }
 
-export async function recoverWriteTransactions(transactionDir: string): Promise<RecoverySummary> {
+export type RecoveryOptions = {
+  // The configured roots. Records are not trusted (the default transaction
+  // directory lives inside the workspace), so when roots are given, a record
+  // that names any path outside them is left untouched.
+  roots?: readonly string[] | undefined;
+};
+
+export async function recoverWriteTransactions(
+  transactionDir: string,
+  options: RecoveryOptions = {},
+): Promise<RecoverySummary> {
   const summary: RecoverySummary = {
     scanned: 0,
     committed: 0,
@@ -193,8 +204,14 @@ export async function recoverWriteTransactions(transactionDir: string): Promise<
       summary.warnings.push(
         `TRANSACTION_RECOVERY_UNRECOVERABLE: ${entry.name}: corrupted record (${message})`,
       );
-      await quarantineRecord(transactionDir, recordPath, entry.name);
-      summary.quarantined += 1;
+      await quarantineRecord(summary, transactionDir, recordPath, entry.name);
+      continue;
+    }
+
+    if (options.roots !== undefined && !(await recordStaysInsideRoots(record, options.roots))) {
+      summary.warnings.push(
+        `TRANSACTION_RECOVERY_SKIPPED: ${entry.name}: record names a path outside the configured roots; it was left untouched`,
+      );
       continue;
     }
 
@@ -209,8 +226,7 @@ export async function recoverWriteTransactions(transactionDir: string): Promise<
         summary.warnings.push(
           `TRANSACTION_RECOVERY_UNRECOVERABLE: ${entry.name}: ${reconciled.detail ?? "ambiguous recovery state"}`,
         );
-        await quarantineRecord(transactionDir, recordPath, entry.name);
-        summary.quarantined += 1;
+        await quarantineRecord(summary, transactionDir, recordPath, entry.name);
         continue;
       }
 
@@ -227,12 +243,46 @@ export async function recoverWriteTransactions(transactionDir: string): Promise<
       summary.warnings.push(
         `TRANSACTION_RECOVERY_UNRECOVERABLE: ${entry.name}: ${message}`,
       );
-      await quarantineRecord(transactionDir, recordPath, entry.name);
-      summary.quarantined += 1;
+      await quarantineRecord(summary, transactionDir, recordPath, entry.name);
     }
   }
 
   return summary;
+}
+
+// A cloned repository can ship records that name any path. Act only on records
+// whose paths lie inside the configured roots, both as written and once the
+// symlinks or junctions in their directories are resolved. A path outside is
+// never even stat()ed: on Windows a UNC path would make the OS authenticate to
+// that host.
+async function recordStaysInsideRoots(
+  record: WriteTransactionRecord,
+  roots: readonly string[],
+): Promise<boolean> {
+  const paths =
+    record.kind === "move" ? [record.sourcePath, record.destinationPath] : [record.targetPath, record.tempPath];
+  const resolvedRoots = roots.map((root) => resolve(root));
+  const lexicallyInside = paths.every(
+    (path) => isAbsolute(path) && resolvedRoots.some((root) => isInside(root, resolve(path))),
+  );
+  if (!lexicallyInside) {
+    return false;
+  }
+
+  const realRoots = await Promise.all(resolvedRoots.map((root) => realpath(root).catch(() => root)));
+  for (const path of paths) {
+    let realParent: string;
+    try {
+      realParent = await realpath(dirname(resolve(path)));
+    } catch {
+      // The directory is gone, so recovery finds nothing there to touch.
+      continue;
+    }
+    if (!realRoots.some((root) => isInside(root, realParent))) {
+      return false;
+    }
+  }
+  return true;
 }
 
 type ReconcileResult = {
@@ -326,13 +376,44 @@ function isScalpelTempPathFor(targetPath: string, tempPath: string): boolean {
   );
 }
 
-async function quarantineRecord(transactionDir: string, recordPath: string, name: string): Promise<void> {
+// The quarantine directory sits inside the untrusted transaction directory
+// too: renaming a record (whose bytes the workspace controls) through a planted
+// symlink or junction would drop that file wherever the link points. Only use
+// a real directory; otherwise leave the record where it is.
+async function quarantineRecord(
+  summary: RecoverySummary,
+  transactionDir: string,
+  recordPath: string,
+  name: string,
+): Promise<void> {
   const quarantineDir = join(transactionDir, "quarantine");
+  if (!(await ensureRealDirectory(quarantineDir))) {
+    summary.warnings.push(
+      `TRANSACTION_RECOVERY_SKIPPED: ${name}: quarantine directory is a symlink or not a directory; the record was left in place`,
+    );
+    return;
+  }
+
   try {
-    await mkdir(quarantineDir, { recursive: true });
     await rename(recordPath, join(quarantineDir, `${Date.now().toString(36)}-${name}`));
   } catch {
     await rm(recordPath, { force: true });
+  }
+  summary.quarantined += 1;
+}
+
+async function ensureRealDirectory(path: string): Promise<boolean> {
+  try {
+    // Not recursive: mkdir() must not create anything through a dangling link.
+    await mkdir(path);
+  } catch {
+    // Usually EEXIST; the lstat() below decides whether it can be used.
+  }
+  try {
+    const info = await lstat(path);
+    return info.isDirectory() && !info.isSymbolicLink();
+  } catch {
+    return false;
   }
 }
 

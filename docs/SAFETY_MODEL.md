@@ -122,10 +122,13 @@ Guaranteed today:
 - writes and moves re-resolve their directories (`realpath`) when they commit
   and refuse with `SYMLINK_NOT_ALLOWED` if a directory created or swapped in by
   another process after validation now leads outside the roots
-- workspace content cannot steer Scalpel outside the roots at startup: recovery
-  only deletes `.scalpel-*.tmp` files beside a record's target and does not
-  scan a symlinked transaction directory, and the journal is never appended
-  through a symlink
+- workspace content cannot steer Scalpel outside the roots at startup:
+  recovery leaves untouched any record that names a path outside the
+  configured roots, as written or once symlinks or junctions in its directories
+  are resolved (paths written outside the roots are not even stat()ed); it only
+  deletes `.scalpel-*.tmp` files beside a record's target, does not scan a
+  symlinked transaction directory, and never moves a record into a symlinked
+  quarantine directory; the journal is never appended through a symlink
 
 ### Hidden Paths
 

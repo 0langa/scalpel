@@ -25,7 +25,7 @@ async function main(): Promise<void> {
   );
 
   const logger = createLogger(config.logLevel);
-  const recovery = await recoverWriteTransactions(config.transactionDir);
+  const recovery = await recoverWriteTransactions(config.transactionDir, { roots: config.roots });
   if (recovery.scanned > 0 || recovery.warnings.length > 0) {
     const hasProblems = recovery.unrecoverable > 0 || recovery.warnings.length > 0;
     logger[hasProblems ? "error" : "info"](

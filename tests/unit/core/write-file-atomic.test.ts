@@ -395,4 +395,135 @@ describe("writeFileAtomic", () => {
       });
     });
   });
+
+  test("recovery with roots still reconciles records inside them", async () => {
+    await withTempDir(async (root) => {
+      const transactionDir = join(root, ".scalpel-transactions");
+      const filePath = join(root, "nested", "target.txt");
+      const tempPath = join(root, "nested", ".scalpel-leftover.tmp");
+      await mkdir(join(root, "nested"));
+      await writeFile(filePath, "before\n", "utf8");
+      await writeFile(tempPath, "after\n", "utf8");
+      const write = await beginWriteTransaction({ transactionDir, targetPath: filePath, tempPath, content: "after\n" });
+      await write.markTempWritten();
+      const sourcePath = join(root, "move-source.txt");
+      const destinationPath = join(root, "nested", "move-destination.txt");
+      await writeFile(sourcePath, "moved\n", "utf8");
+      const move = await beginMoveTransaction({ transactionDir, sourcePath, destinationPath });
+      await rename(sourcePath, destinationPath);
+      await move.markRenamed();
+
+      const summary = await recoverWriteTransactions(transactionDir, { roots: [root] });
+
+      expect(summary).toMatchObject({ scanned: 2, aborted: 1, committed: 1, cleanedTemps: 1, warnings: [] });
+      await expect(readFile(filePath, "utf8")).resolves.toBe("before\n");
+      await expect(readdir(join(root, "nested"))).resolves.toEqual(["move-destination.txt", "target.txt"]);
+      await expect(readdir(transactionDir)).resolves.toEqual([]);
+    });
+  });
+
+  test("recovery leaves records that name paths outside the roots untouched", async () => {
+    await withTempDir(async (root) => {
+      await withTempDir(async (outside) => {
+        // Another Scalpel's in-flight temp file, and files a crafted move
+        // record points at: recovery must not touch (or even stat) them.
+        const transactionDir = join(root, ".scalpel-transactions");
+        const outsideTemp = join(outside, ".scalpel-in-flight.tmp");
+        await writeFile(outsideTemp, "in flight\n", "utf8");
+        await writeFile(join(outside, "a.txt"), "a\n", "utf8");
+        await mkdir(transactionDir);
+        const records = {
+          "write.json": {
+            kind: "text_write",
+            targetPath: join(outside, "target.txt"),
+            tempPath: outsideTemp,
+            afterSha256: "0".repeat(64),
+            afterSizeBytes: 1,
+            state: "temp_written",
+          },
+          "move.json": {
+            kind: "move",
+            sourcePath: join(outside, "a.txt"),
+            destinationPath: join(root, "a.txt"),
+            state: "renamed",
+          },
+        };
+        for (const [name, record] of Object.entries(records)) {
+          await writeFile(
+            join(transactionDir, name),
+            JSON.stringify({ version: 1, id: name, updatedAt: new Date().toISOString(), ...record }),
+            "utf8",
+          );
+        }
+
+        const summary = await recoverWriteTransactions(transactionDir, { roots: [root] });
+
+        expect(summary).toMatchObject({
+          scanned: 2,
+          committed: 0,
+          aborted: 0,
+          unrecoverable: 0,
+          cleanedTemps: 0,
+          quarantined: 0,
+        });
+        expect(summary.warnings).toHaveLength(2);
+        expect(summary.warnings.every((warning) => warning.startsWith("TRANSACTION_RECOVERY_SKIPPED"))).toBe(true);
+        await expect(readFile(outsideTemp, "utf8")).resolves.toBe("in flight\n");
+        await expect(readdir(transactionDir)).resolves.toEqual(["move.json", "write.json"]);
+      });
+    });
+  });
+
+  test("recovery does not reach outside the roots through a link inside them", async () => {
+    await withTempDir(async (root) => {
+      await withTempDir(async (outside) => {
+        const transactionDir = join(root, ".scalpel-transactions");
+        const outsideTemp = join(outside, ".scalpel-in-flight.tmp");
+        await writeFile(outsideTemp, "in flight\n", "utf8");
+        await symlink(outside, join(root, "linked"), process.platform === "win32" ? "junction" : "dir");
+        await mkdir(transactionDir);
+        await writeFile(
+          join(transactionDir, "linked.json"),
+          JSON.stringify({
+            version: 1,
+            kind: "text_write",
+            id: "linked",
+            targetPath: join(root, "linked", "target.txt"),
+            tempPath: join(root, "linked", ".scalpel-in-flight.tmp"),
+            afterSha256: "0".repeat(64),
+            afterSizeBytes: 1,
+            state: "temp_written",
+            updatedAt: new Date().toISOString(),
+          }),
+          "utf8",
+        );
+
+        const summary = await recoverWriteTransactions(transactionDir, { roots: [root] });
+
+        expect(summary).toMatchObject({ scanned: 1, cleanedTemps: 0, quarantined: 0 });
+        expect(summary.warnings).toMatchObject([expect.stringMatching(/^TRANSACTION_RECOVERY_SKIPPED: linked\.json/)]);
+        await expect(readFile(outsideTemp, "utf8")).resolves.toBe("in flight\n");
+      });
+    });
+  });
+
+  test("recovery never moves a record into a quarantine directory that is a link", async () => {
+    await withTempDir(async (root) => {
+      await withTempDir(async (outside) => {
+        const transactionDir = join(root, ".scalpel-transactions");
+        await mkdir(transactionDir);
+        await writeFile(join(transactionDir, "payload.json"), "bytes the repository chose\n", "utf8");
+        await symlink(outside, join(transactionDir, "quarantine"), process.platform === "win32" ? "junction" : "dir");
+
+        const summary = await recoverWriteTransactions(transactionDir, { roots: [root] });
+
+        expect(summary).toMatchObject({ scanned: 1, unrecoverable: 1, quarantined: 0 });
+        expect(summary.warnings).toHaveLength(2);
+        await expect(readdir(outside)).resolves.toEqual([]);
+        await expect(readFile(join(transactionDir, "payload.json"), "utf8")).resolves.toBe(
+          "bytes the repository chose\n",
+        );
+      });
+    });
+  });
 });

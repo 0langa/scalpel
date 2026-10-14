@@ -132,11 +132,16 @@ scanned record into one of three terminal decisions:
   unknown partial state.
 
 The default transaction directory lives inside the workspace, so recovery does
-not trust record contents: it only deletes temp files named `.scalpel-*.tmp`
-that sit in the same directory as the record's target, and quarantines a record
-naming any other temp path without touching that path. A transaction directory
-that is a symlink, a junction, or not a directory is not scanned at all
-(`TRANSACTION_RECOVERY_SKIPPED`). A write or move that fails before its rename
+not trust record contents. A record that names a path outside the configured
+roots (as written, or once symlinks or junctions in its directories are
+resolved) is left in place, untouched, with a `TRANSACTION_RECOVERY_SKIPPED`
+warning; a later start whose roots contain those paths reconciles it. Recovery
+only deletes temp files named `.scalpel-*.tmp` that sit in the same directory
+as the record's target, and quarantines a record naming any other temp path
+without touching that path. A transaction directory that is a symlink, a
+junction, or not a directory is not scanned at all, and a record is never moved
+into a `quarantine` directory that is a link (both
+`TRANSACTION_RECOVERY_SKIPPED`). A write or move that fails before its rename
 removes its own record, since nothing on disk changed.
 
 Recovery never writes file content into transaction records, warnings, or logs.
