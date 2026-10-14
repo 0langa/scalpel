@@ -336,12 +336,16 @@ class MoveGuardError extends Error {
   }
 }
 
-type DirectoryIdentity = { dev: number; ino: number } | undefined;
+// birthtime as well: Linux readily reuses a just-freed inode number for a new
+// directory created at the same path.
+type DirectoryIdentity = { dev: number; ino: number; birthtimeMs: number } | undefined;
 
 async function directoryIdentity(path: string): Promise<DirectoryIdentity> {
   try {
     const info = await lstat(path);
-    return info.isDirectory() ? { dev: info.dev, ino: info.ino } : undefined;
+    return info.isDirectory()
+      ? { dev: info.dev, ino: info.ino, birthtimeMs: info.birthtimeMs }
+      : undefined;
   } catch {
     return undefined;
   }
@@ -357,7 +361,12 @@ async function revalidateParentDirectory(
 ): Promise<DomainResult<undefined>> {
   try {
     const info = await lstat(path);
-    if (!info.isDirectory() || info.dev !== expected?.dev || info.ino !== expected.ino) {
+    if (
+      !info.isDirectory() ||
+      info.dev !== expected?.dev ||
+      info.ino !== expected.ino ||
+      info.birthtimeMs !== expected.birthtimeMs
+    ) {
       return failure(
         "CONCURRENCY_CONFLICT",
         "Destination parent directory was replaced after the move plan was built",
