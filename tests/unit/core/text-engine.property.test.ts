@@ -1,11 +1,12 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import fc from "fast-check";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 
+import { createConfig, type ScalpelConfig } from "../../../src/core/config.js";
 import { readLineRangeSnapshot } from "../../../src/core/file-metadata.js";
 import { countLines, detectLineEnding } from "../../../src/core/line-endings.js";
 import {
@@ -13,7 +14,14 @@ import {
   streamExactReplaceChunks,
   type ReplacementMode,
 } from "../../../src/core/streaming-replace.js";
-import { planExactReplace, splitLinesWithEndings, type PatchOccurrence } from "../../../src/core/text.js";
+import {
+  planExactReplace,
+  splitBom,
+  splitLinesWithEndings,
+  type PatchOccurrence,
+} from "../../../src/core/text.js";
+import { deleteRangeTool } from "../../../src/tools/delete-range.js";
+import { insertTool } from "../../../src/tools/insert.js";
 
 // Small alphabet so that generated needles actually occur in generated text,
 // with the pieces that break naive text handling: CRLF, a BOM, a two-byte
@@ -61,6 +69,14 @@ function modeFor(value: PatchOccurrence): ReplacementMode {
     return { kind: "all" };
   }
   return { kind: "indexes", indexes: new Set([value === "first" || value === "unique" ? 1 : value]) };
+}
+
+function stripEol(line: string): string {
+  return line.replace(/\r?\n$/u, "");
+}
+
+function configFor(path: string): ScalpelConfig {
+  return createConfig({ roots: [dirname(path)], transactionDir: join(directory, ".transactions") });
 }
 
 async function collect(chunks: AsyncIterable<string>): Promise<Buffer> {
@@ -115,6 +131,68 @@ describe("text engine properties", () => {
         },
       ),
       { numRuns: 300 },
+    );
+  });
+
+  test("insert adds whole lines at the requested position and keeps the BOM first", async () => {
+    await fc.assert(
+      fc.asyncProperty(
+        fc.boolean(),
+        text,
+        text,
+        fc.nat(),
+        async (withBom, body, inserted, position) => {
+          const original = `${withBom ? "﻿" : ""}${body}`;
+          const path = await writeTemp(original);
+          const { bom, body: originalBody } = splitBom(original);
+          const originalLines = splitLinesWithEndings(originalBody).map(stripEol);
+          const line = (position % (originalLines.length + 1)) + 1;
+
+          const result = await insertTool({ path, content: inserted, line }, configFor(path));
+
+          expect(result.ok).toBe(true);
+          const after = await readFile(path, "utf8");
+          expect(after.startsWith(bom)).toBe(true);
+          const insertedText = inserted === "" || inserted.endsWith("\n") ? inserted : `${inserted}\n`;
+          expect(splitLinesWithEndings(after.slice(bom.length)).map(stripEol)).toEqual([
+            ...originalLines.slice(0, line - 1),
+            ...splitLinesWithEndings(insertedText).map(stripEol),
+            ...originalLines.slice(line - 1),
+          ]);
+        },
+      ),
+      { numRuns: 200 },
+    );
+  });
+
+  test("delete_range removes exactly the requested lines and keeps the BOM", async () => {
+    await fc.assert(
+      fc.asyncProperty(
+        fc.boolean(),
+        text.filter((body) => splitLinesWithEndings(splitBom(body).body).length > 0),
+        fc.nat(),
+        fc.nat(),
+        async (withBom, body, first, span) => {
+          const original = `${withBom ? "﻿" : ""}${body}`;
+          const path = await writeTemp(original);
+          const { bom, body: originalBody } = splitBom(original);
+          const originalLines = splitLinesWithEndings(originalBody);
+          const startLine = (first % originalLines.length) + 1;
+          const endLine = startLine + (span % (originalLines.length - startLine + 1));
+
+          const result = await deleteRangeTool(
+            { path, start_line: startLine, end_line: endLine },
+            configFor(path),
+          );
+
+          expect(result.ok).toBe(true);
+          // Remaining lines keep their exact bytes, and a BOM stays at offset 0.
+          await expect(readFile(path, "utf8")).resolves.toBe(
+            bom + [...originalLines.slice(0, startLine - 1), ...originalLines.slice(endLine)].join(""),
+          );
+        },
+      ),
+      { numRuns: 200 },
     );
   });
 
