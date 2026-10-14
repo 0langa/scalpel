@@ -146,16 +146,14 @@ Reason:
 - excellent fit for edit-engine invariants
 - catches edge cases example-based tests miss
 
-### In-memory filesystem tests
+### Filesystem tests
 
-Use `memfs` for unit-level filesystem simulation.
+Tests run against real temporary directories, not an in-memory filesystem.
 
 Reason:
 
-- keeps unit tests fast
-- makes path and mutation scenarios easier to exercise
-
-Do not rely on it alone. Keep real filesystem integration tests too.
+- path confinement, links, locks, renames, and Windows sharing violations only behave correctly on a real filesystem
+- an in-memory simulation would hide exactly the failures the safety model guards against
 
 ## Logging And Diagnostics
 
@@ -215,7 +213,6 @@ This keeps the server portable and reliable even when external tools are absent.
 - `tsx`
 - `vitest`
 - `fast-check`
-- `memfs`
 - `eslint`
 - `@eslint/js`
 - `typescript-eslint`
@@ -272,6 +269,5 @@ If we want the highest-confidence starting point, the stack should be:
 - Biome formatter
 - Vitest
 - fast-check
-- memfs
 - pino
 - jsdiff
