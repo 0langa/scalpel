@@ -265,7 +265,8 @@ Moves or renames a file or directory.
 - rejects SHA preconditions for directories with `INVALID_INPUT`
 - uses Node `rename()`, with the same Windows lock retry as text writes
 - moving a directory into its own subtree fails with `INVALID_INPUT` before anything is created
-- revalidates source, destination, and the destination parent directory immediately before the rename; external replacement of any of them fails with `CONCURRENCY_CONFLICT` instead of silently overwriting or renaming into a replaced parent
+- revalidates source, destination, and the destination parent directory (by identity, not just type) immediately before the rename and before every Windows retry; external replacement of any of them fails with `CONCURRENCY_CONFLICT` instead of silently overwriting or renaming into a replaced parent
+- the source's and destination's directories must still resolve, through any symlinks or junctions, inside a configured root, or the move fails with `SYMLINK_NOT_ALLOWED`
 - a failed `rename()` itself (for example a parent directory that changed type between the revalidation check and the syscall) also fails with `CONCURRENCY_CONFLICT` instead of an unstructured error; a rename the OS refuses with `EACCES`/`EPERM` (permissions, or a file still held open on Windows after the retries) fails with `PERMISSION_DENIED`, and `details.cause_code` carries the OS code
 - cross-device or cross-filesystem moves are detected via the OS `EXDEV` error and rejected with `CROSS_DEVICE_MOVE_NOT_SUPPORTED` before any partial copy is attempted; Scalpel does not implement a copy/delete fallback
 
