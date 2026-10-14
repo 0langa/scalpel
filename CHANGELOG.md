@@ -4,6 +4,8 @@ All notable changes to Scalpel are documented here.
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-10-15
+
 ### Security
 
 - Startup recovery no longer trusts records in the in-workspace transaction directory: it only deletes `.scalpel-*.tmp` files beside the record's target (a crafted record could delete any file before) and does not scan a symlinked or junctioned transaction directory (which could move or delete unrelated `*.json` files). Records that name paths outside the configured roots, directly or through a link, are left untouched, and records are never quarantined through a linked `quarantine` directory.
@@ -37,6 +39,28 @@ All notable changes to Scalpel are documented here.
 ### Removed
 
 - The unused `memfs` dev dependency and the placeholder `allowBuilds` entries for packages Scalpel never installs.
+
+### Upgrade Notes
+
+- Tool names, schemas, result fields, and the `scalpel_*` aliases are unchanged. The new error codes `IO_ERROR` and `INTERNAL_ERROR` can appear, with the OS error code in `details.cause_code`.
+- Text that an edit adds to an existing file now takes that file's line-ending style. `create` still writes its content exactly as given. Within one `batch_edit`, a later edit that quotes LF text an earlier edit inserted into a CRLF file no longer matches: the batch fails with `ATOMIC_FAILURE` and the file is untouched.
+- Read-only files are refused with `PERMISSION_DENIED` instead of being replaced.
+- A ranged `read` whose range exceeds `maxReadBytes` fails with `FILE_TOO_LARGE`.
+- `list_dir` hides hidden entries unless `allowHiddenPaths` is set and reports symlinked directories as links; `grep` lists links in `skipped_files` instead of following them.
+- On Windows, a call on a file another process holds open is retried for up to `SCALPEL_RENAME_RETRY_MS` (default 5000 ms) before it fails, so it can take up to five seconds.
+
+### Verification
+
+- `pnpm validate` (lint, typecheck, 179 tests with 9 platform skips, build, MCP smoke 33/33, package smoke) and `pnpm audit` pass on Windows.
+- Starter hardening (`pnpm hardening:all`): 68 of 70 required checks pass on a local Windows machine. The two external symlink-swap race checks need the file-symlink privilege, which that machine lacks (`EPERM`); they run in the Hardening workflow on GitHub-hosted Windows and Ubuntu runners.
+- The expanded public-corpus hardening was last run for 1.0.0.
+
+### Known Gaps
+
+- Text containing a NUL character is written, but the edit reports `CONCURRENCY_CONFLICT`, because the check after the commit classifies the new file as binary. Nothing is applied twice: text tools then refuse the file as binary, and `create` answers a retry with `FILE_EXISTS`.
+- `create`, `append`, and `prepend` create missing parent directories before the commit-time containment check, so a junction swapped in during the call can still get empty directories created outside the roots. The file itself is never written there.
+- The replacement file does not keep hard links, explicit ACLs, NTFS alternate data streams, Windows attributes other than read-only, or POSIX owner and group (see `docs/SAFETY_MODEL.md`).
+- Unchanged from 1.0.0: malicious same-user modification after Scalpel reports success is outside the safety claim, parent-directory `fsync` support is platform-dependent, and `batch_edit`, `insert`, `delete_range`, and `replace_between_markers` still need the whole file within `maxReadBytes`.
 
 ## [1.0.0] - 2026-07-03
 
@@ -107,5 +131,6 @@ All notable changes to Scalpel are documented here.
 - The safety claim does not cover malicious same-user modification after Scalpel has already reported success.
 - Cross-device move recovery and guaranteed parent-directory sync on every platform are not provided.
 
+[1.1.0]: https://github.com/0langa/scalpel/releases/tag/v1.1.0
 [1.0.0]: https://github.com/0langa/scalpel/releases/tag/v1.0.0
 [1.0.0-alpha.1]: https://github.com/0langa/scalpel/releases/tag/v1.0.0-alpha.1
