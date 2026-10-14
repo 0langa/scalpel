@@ -1,7 +1,7 @@
 import { type ScalpelConfig } from "../core/config.js";
 import { createUnifiedDiff } from "../core/diff.js";
 import { failure, success, type DomainResult } from "../core/errors.js";
-import { readLineEndingStyle } from "../core/file-metadata.js";
+import { readLineEndingStyleIfNeeded } from "../core/file-metadata.js";
 import { combineWarnings, recordJournal, snapshotState, textState } from "../core/journal.js";
 import {
   readPathStatForMutation,
@@ -176,7 +176,7 @@ async function patchLargeExistingFile(
     return failure("UNSUPPORTED_ENCODING", "File text metadata could not be computed", path);
   }
 
-  const style = await readLineEndingStyle(path);
+  const style = await readLineEndingStyleIfNeeded(path, input.new_string);
   if (!style.ok) {
     return style;
   }

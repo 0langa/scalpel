@@ -16,7 +16,7 @@ import {
 import { failure, success, type DomainResult } from "../core/errors.js";
 import { withPathLock } from "../core/path-lock.js";
 import { resolveWorkspacePath } from "../core/path-policy.js";
-import { readLineEndingStyle } from "../core/file-metadata.js";
+import { readLineEndingStyleIfNeeded } from "../core/file-metadata.js";
 import { countLines, matchLineEndings } from "../core/line-endings.js";
 import { countInsertedLines } from "../core/text.js";
 
@@ -165,7 +165,7 @@ async function appendLargeExistingFile(
     return failure("UNSUPPORTED_ENCODING", "File text metadata could not be computed", path);
   }
 
-  const style = await readLineEndingStyle(path);
+  const style = await readLineEndingStyleIfNeeded(path, input.content);
   if (!style.ok) {
     return style;
   }

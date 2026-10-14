@@ -381,6 +381,17 @@ export async function readLineEndingStyle(
   }
 }
 
+// matchLineEndings never changes text without a line break, so such text skips the extra pass over a
+// large file (and reports "none", which leaves it as it is).
+export async function readLineEndingStyleIfNeeded(
+  path: string,
+  text: string
+): Promise<DomainResult<{ eol: LineEnding; endsWithCr: boolean }>> {
+  return text.includes("\n")
+    ? readLineEndingStyle(path)
+    : success({ eol: "none", endsWithCr: false });
+}
+
 export async function classifyFile(path: string, sampleBytes = 8192): Promise<DomainResult<TextKind>> {
   try {
     const stats = await stat(path);

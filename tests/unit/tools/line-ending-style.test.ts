@@ -4,7 +4,10 @@ import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 
 import { createConfig } from "../../../src/core/config.js";
-import { readLineEndingStyle } from "../../../src/core/file-metadata.js";
+import {
+  readLineEndingStyle,
+  readLineEndingStyleIfNeeded,
+} from "../../../src/core/file-metadata.js";
 import { matchLineEndings } from "../../../src/core/line-endings.js";
 import { appendTool } from "../../../src/tools/append.js";
 import { batchEditTool } from "../../../src/tools/batch-edit.js";
@@ -63,6 +66,23 @@ describe("readLineEndingStyle", () => {
       await expect(readLineEndingStyle(filePath, { highWaterMark: 1 })).resolves.toEqual({
         ok: true,
         data: { eol: "mixed", endsWithCr: false },
+      });
+    });
+  });
+});
+
+describe("readLineEndingStyleIfNeeded", () => {
+  test("does not read the file for text without a line break", async () => {
+    await withTempDir(async (root) => {
+      const missing = join(root, "missing.txt");
+
+      await expect(readLineEndingStyleIfNeeded(missing, "no line break")).resolves.toEqual({
+        ok: true,
+        data: { eol: "none", endsWithCr: false },
+      });
+      await expect(readLineEndingStyleIfNeeded(missing, "line\n")).resolves.toMatchObject({
+        ok: false,
+        error: { code: "FILE_NOT_FOUND" },
       });
     });
   });
