@@ -1,8 +1,8 @@
-import { mkdir, stat } from "node:fs/promises";
+import { lstat, mkdir, stat } from "node:fs/promises";
 import { dirname, isAbsolute, relative, sep } from "node:path";
 
 import { type ScalpelConfig } from "../core/config.js";
-import { failure, success, type DomainResult } from "../core/errors.js";
+import { failure, success, type DomainResult, type FailureResult } from "../core/errors.js";
 import { crashIfFaultPoint } from "../core/fault-injection.js";
 import { type FileStat, readPathStat } from "../core/file-metadata.js";
 import { recordJournal, snapshotState } from "../core/journal.js";
@@ -149,6 +149,7 @@ export async function moveTool(
     }
 
     await mkdir(dirname(destination.data), { recursive: true });
+    const parentIdentity = await directoryIdentity(dirname(destination.data));
 
     await runHardeningInterference(source.data, "BEFORE_COMMIT");
     await runHardeningInterference(destination.data, "BEFORE_COMMIT");
@@ -183,7 +184,7 @@ export async function moveTool(
       return destinationGuard;
     }
 
-    const parentGuard = await revalidateParentDirectory(dirname(destination.data));
+    const parentGuard = await revalidateParentDirectory(dirname(destination.data), parentIdentity);
     if (!parentGuard.ok) {
       await recordJournal(config, {
         tool: "move",
@@ -203,11 +204,23 @@ export async function moveTool(
     });
     crashIfFaultPoint("move.after_transaction_start");
     try {
-      await renameWithRetry(source.data, destination.data);
+      // Windows may retry the rename for a while; recheck what can change in
+      // the meantime before every attempt.
+      await renameWithRetry(source.data, destination.data, async () => {
+        const recheck = await revalidateParentDirectory(dirname(destination.data), parentIdentity);
+        const absent = destinationExists ? recheck : await revalidatePathIsAbsent(destination.data);
+        const failed = !recheck.ok ? recheck : absent;
+        if (!failed.ok) {
+          throw new MoveGuardError(failed);
+        }
+      });
     } catch (error) {
       // rename() is atomic: when it fails nothing moved, so the record must not
       // linger (with overwrite it would later be quarantined as "both exist").
       await Promise.allSettled([transaction.complete()]);
+      if (error instanceof MoveGuardError) {
+        return error.result;
+      }
       const causeCode = errorCode(error);
 
       if (causeCode === "EXDEV") {
@@ -317,10 +330,34 @@ async function revalidatePathIsAbsent(path: string): Promise<DomainResult<undefi
   }
 }
 
-async function revalidateParentDirectory(path: string): Promise<DomainResult<undefined>> {
+class MoveGuardError extends Error {
+  constructor(readonly result: FailureResult) {
+    super(result.error.message);
+  }
+}
+
+type DirectoryIdentity = { dev: number; ino: number } | undefined;
+
+async function directoryIdentity(path: string): Promise<DirectoryIdentity> {
   try {
-    const info = await stat(path);
-    if (!info.isDirectory()) {
+    const info = await lstat(path);
+    return info.isDirectory() ? { dev: info.dev, ino: info.ino } : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+// lstat, not stat: a parent swapped for a symlink or junction to another
+// directory still "is a directory" through stat(), and the rename would move
+// the source wherever the link points. Comparing the identity also catches a
+// parent replaced by a different real directory.
+async function revalidateParentDirectory(
+  path: string,
+  expected: DirectoryIdentity,
+): Promise<DomainResult<undefined>> {
+  try {
+    const info = await lstat(path);
+    if (!info.isDirectory() || info.dev !== expected?.dev || info.ino !== expected.ino) {
       return failure(
         "CONCURRENCY_CONFLICT",
         "Destination parent directory was replaced after the move plan was built",

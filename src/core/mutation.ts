@@ -559,13 +559,15 @@ export async function runHardeningInterference(
     await mkdir(path, { recursive: true });
     return;
   }
-  if (mode === "symlink") {
+  if (mode === "symlink" || mode === "junction") {
     const target = process.env[`SCALPEL_HARDENING_INTERFERE_${phase}_SYMLINK_TARGET`];
     if (target === undefined) {
       throw new Error(`SCALPEL_HARDENING_INTERFERE_${phase}_SYMLINK_TARGET is required`);
     }
     await rm(path, { recursive: true, force: true });
-    await symlink(target, path, "file");
+    // "junction": a directory link, which Windows lets unprivileged users create.
+    const linkType = mode === "symlink" ? "file" : process.platform === "win32" ? "junction" : "dir";
+    await symlink(target, path, linkType);
     return;
   }
   if (mode === "file") {

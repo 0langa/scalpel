@@ -1,4 +1,4 @@
-import { chmod, mkdir, readFile, stat, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readdir, readFile, stat, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, test } from "vitest";
@@ -599,6 +599,38 @@ describe("mutation and search tools", () => {
       await expect(readFile(sourcePath, "utf8")).resolves.toBe("hello\n");
       await expect(readFile(destinationDir, "utf8")).resolves.toBe("external\n");
     });
+  });
+
+  test("move rejects a destination parent swapped for a junction or a new directory before commit", async () => {
+    for (const mode of ["junction", "directory"] as const) {
+      await withTempDir(async (root) => {
+        await withTempDir(async (outside) => {
+          const sourcePath = join(root, "old.txt");
+          const destinationDir = join(root, "nested");
+          await writeFile(sourcePath, "hello\n", "utf8");
+          const config = createConfig({ roots: [root] });
+
+          const previousPath = process.env.SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_PATH;
+          const previousMode = process.env.SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_MODE;
+          const previousTarget = process.env.SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_SYMLINK_TARGET;
+          process.env.SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_PATH = destinationDir;
+          process.env.SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_MODE = mode;
+          process.env.SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_SYMLINK_TARGET = outside;
+
+          try {
+            const result = await moveTool({ source: "old.txt", destination: "nested/new.txt" }, config);
+            expect(result).toMatchObject({ ok: false, error: { code: "CONCURRENCY_CONFLICT" } });
+          } finally {
+            restoreEnv("SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_PATH", previousPath);
+            restoreEnv("SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_MODE", previousMode);
+            restoreEnv("SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_SYMLINK_TARGET", previousTarget);
+          }
+
+          await expect(readFile(sourcePath, "utf8")).resolves.toBe("hello\n");
+          await expect(readdir(outside)).resolves.toEqual([]);
+        });
+      });
+    }
   });
 
   test("grep finds literal matches across nested files", async () => {
