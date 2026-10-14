@@ -9,11 +9,14 @@ All notable changes to Scalpel are documented here.
 - Startup recovery no longer trusts records in the in-workspace transaction directory: it only deletes `.scalpel-*.tmp` files beside the record's target (a crafted record could delete any file before) and does not scan a symlinked or junctioned transaction directory (which could move or delete unrelated `*.json` files).
 - `grep` no longer follows symlinks or junctions out of the configured roots; links are reported in `skipped_files` with reason `symlink`.
 - The operation journal is never appended through a symlink.
+- Writes and moves now re-resolve their directories when they commit and recheck the target's and parent's identity right before the rename: a directory created as, or swapped for, a junction after validation could make `create` and `move` write outside the roots (or pull an outside file in) while reporting success.
 - `@modelcontextprotocol/sdk` 1.32.1 and patched transitive dependencies (`pnpm audit` was reporting 32 advisories, all through the SDK).
 
 ### Fixed
 
 - Streaming `patch` on oversized files could split a UTF-16 surrogate pair across output chunks and write astral characters (emoji, ...) as two U+FFFD while reporting success.
+- An edit another process made while Scalpel was writing a replacement (seconds on the streaming paths, or during Windows rename retries) was silently overwritten; it now fails with `CONCURRENCY_CONFLICT`.
+- Names that merely start with two dots (`..cache`, `..notes.txt`) were rejected as outside the root.
 - A UTF-8 BOM was dropped by streaming `patch` and `delete_range` of line 1, and pushed mid-file by `prepend` and `insert` at line 1; ranged reads and `read_chunk` stripped it while full reads kept it; `grep` could not anchor `^` on line 1.
 - `insert` after a final line without a newline glued the text onto that line.
 - Every edit replaced the file's mode (scripts lost the executable bit); modes are now kept on POSIX, and read-only files fail with `PERMISSION_DENIED` instead of being replaced.
