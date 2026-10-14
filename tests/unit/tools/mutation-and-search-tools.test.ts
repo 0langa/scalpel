@@ -1,4 +1,4 @@
-import { chmod, mkdir, readdir, readFile, stat, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readdir, readFile, stat, symlink, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, test } from "vitest";
@@ -598,6 +598,42 @@ describe("mutation and search tools", () => {
 
       await expect(readFile(sourcePath, "utf8")).resolves.toBe("hello\n");
       await expect(readFile(destinationDir, "utf8")).resolves.toBe("external\n");
+    });
+  });
+
+  test("move refuses a source whose directory was swapped for a link to a look-alike outside", async () => {
+    await withTempDir(async (root) => {
+      await withTempDir(async (outside) => {
+        const sourceDir = join(root, "src");
+        const sourcePath = join(sourceDir, "data.txt");
+        await mkdir(sourceDir);
+        await writeFile(sourcePath, "same\n", "utf8");
+        // An outside file indistinguishable by content and mtime.
+        const stamp = new Date("2026-01-01T00:00:00.000Z");
+        await writeFile(join(outside, "data.txt"), "same\n", "utf8");
+        await utimes(sourcePath, stamp, stamp);
+        await utimes(join(outside, "data.txt"), stamp, stamp);
+        const config = createConfig({ roots: [root] });
+
+        const previousPath = process.env.SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_PATH;
+        const previousMode = process.env.SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_MODE;
+        const previousTarget = process.env.SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_SYMLINK_TARGET;
+        process.env.SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_PATH = sourceDir;
+        process.env.SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_MODE = "junction";
+        process.env.SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_SYMLINK_TARGET = outside;
+
+        try {
+          const result = await moveTool({ source: "src/data.txt", destination: "moved.txt" }, config);
+          expect(result).toMatchObject({ ok: false, error: { code: "SYMLINK_NOT_ALLOWED" } });
+        } finally {
+          restoreEnv("SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_PATH", previousPath);
+          restoreEnv("SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_MODE", previousMode);
+          restoreEnv("SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_SYMLINK_TARGET", previousTarget);
+        }
+
+        await expect(readFile(join(outside, "data.txt"), "utf8")).resolves.toBe("same\n");
+        await expect(stat(join(root, "moved.txt"))).rejects.toThrow();
+      });
     });
   });
 

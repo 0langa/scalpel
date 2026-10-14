@@ -9,6 +9,7 @@ import { recordJournal, snapshotState } from "../core/journal.js";
 import {
   readPathStatForMutation,
   runHardeningInterference,
+  validateParentInsideRoots,
   validatePathIsNotSymlink,
 } from "../core/mutation.js";
 import { withPathLock } from "../core/path-lock.js";
@@ -152,6 +153,7 @@ export async function moveTool(
     const parentIdentity = await directoryIdentity(dirname(destination.data));
 
     await runHardeningInterference(source.data, "BEFORE_COMMIT");
+    await runHardeningInterference(dirname(source.data), "BEFORE_COMMIT");
     await runHardeningInterference(destination.data, "BEFORE_COMMIT");
     await runHardeningInterference(dirname(destination.data), "BEFORE_COMMIT");
 
@@ -184,7 +186,7 @@ export async function moveTool(
       return destinationGuard;
     }
 
-    const parentGuard = await revalidateParentDirectory(dirname(destination.data), parentIdentity);
+    const parentGuard = await revalidateMoveParents(source.data, destination.data, parentIdentity, config.roots);
     if (!parentGuard.ok) {
       await recordJournal(config, {
         tool: "move",
@@ -207,7 +209,7 @@ export async function moveTool(
       // Windows may retry the rename for a while; recheck what can change in
       // the meantime before every attempt.
       await renameWithRetry(source.data, destination.data, async () => {
-        const recheck = await revalidateParentDirectory(dirname(destination.data), parentIdentity);
+        const recheck = await revalidateMoveParents(source.data, destination.data, parentIdentity, config.roots);
         const absent = destinationExists ? recheck : await revalidatePathIsAbsent(destination.data);
         const failed = !recheck.ok ? recheck : absent;
         if (!failed.ok) {
@@ -328,6 +330,29 @@ async function revalidatePathIsAbsent(path: string): Promise<DomainResult<undefi
   } catch {
     return success(undefined);
   }
+}
+
+// Both ends must still resolve inside the roots: an ancestor directory that
+// another process swapped for a link would otherwise move the file out of (or
+// into) the workspace, and the destination parent must be the directory that
+// was there when the move was planned.
+async function revalidateMoveParents(
+  source: string,
+  destination: string,
+  parentIdentity: DirectoryIdentity,
+  roots: readonly string[],
+): Promise<DomainResult<undefined>> {
+  const parent = await revalidateParentDirectory(dirname(destination), parentIdentity);
+  if (!parent.ok) {
+    return parent;
+  }
+  for (const path of [source, destination]) {
+    const containment = await validateParentInsideRoots(path, roots);
+    if (!containment.ok) {
+      return containment;
+    }
+  }
+  return success(undefined);
 }
 
 class MoveGuardError extends Error {

@@ -544,7 +544,7 @@ async function assertTargetUnchanged(
 // file and the rename out of the roots. Resolve the parent for real and
 // require it to still be inside a configured root (also resolved, so a root
 // that itself sits behind a symlink keeps working).
-async function validateParentInsideRoots(
+export async function validateParentInsideRoots(
   path: string,
   roots: readonly string[] | undefined,
 ): Promise<DomainResult<undefined>> {
