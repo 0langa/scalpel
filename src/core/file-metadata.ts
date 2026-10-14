@@ -93,7 +93,8 @@ export async function readLineRangeSnapshot(
   path: string,
   startLine: number,
   endLine: number,
-  options: { maxContentBytes?: number | undefined } = {}
+  // highWaterMark is the read chunk size; only tests lower it.
+  options: { maxContentBytes?: number | undefined; highWaterMark?: number | undefined } = {}
 ): Promise<DomainResult<LineRangeSnapshot>> {
   try {
     const stats = await stat(path);
@@ -142,7 +143,9 @@ export async function readLineRangeSnapshot(
       return true;
     };
 
-    for await (const chunk of createReadStream(path)) {
+    const streamOptions =
+      options.highWaterMark === undefined ? {} : { highWaterMark: options.highWaterMark };
+    for await (const chunk of createReadStream(path, streamOptions)) {
       const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
       if (buffer.includes(0)) {
         return failure("BINARY_FILE_NOT_SUPPORTED", "Binary files are not supported by text tools", path);
