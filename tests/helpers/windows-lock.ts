@@ -1,49 +1,35 @@
-import { spawn } from "node:child_process";
+import { open } from "node:fs/promises";
 
-// Opens `path` from a separate PowerShell process without delete sharing, the
-// way antivirus scanners and indexers do, so renaming over it fails with EPERM
-// until the handle is closed after `holdMs`. Resolves once the lock is held.
-// With `rewriteTo`, the holder also replaces the file's content halfway through
-// the hold, like an editor saving in place while it has the file open.
+// On Windows any open handle on a file (an antivirus scan, the indexer, an
+// editor; here: this process) makes renaming over that file fail with EPERM
+// until the handle is closed. Holds `path` open for `holdMs`. With
+// `rewriteTo`, the holder also replaces the file's content halfway through the
+// hold, like an editor saving in place while it has the file open.
 export async function holdWindowsFileLock(
   path: string,
   holdMs: number,
   rewriteTo?: string,
 ): Promise<{ released: Promise<void> }> {
-  const quoted = path.replaceAll("'", "''");
-  const half = String(Math.floor(holdMs / 2));
-  const hold =
-    rewriteTo === undefined
-      ? `$f = [System.IO.File]::Open('${quoted}', 'Open', 'Read', 'Read'); ` +
-        `[Console]::Out.WriteLine('locked'); [Console]::Out.Flush(); ` +
-        `Start-Sleep -Milliseconds ${String(holdMs)}; $f.Close()`
-      : `$f = [System.IO.File]::Open('${quoted}', 'Open', 'ReadWrite', 'Read'); ` +
-        `[Console]::Out.WriteLine('locked'); [Console]::Out.Flush(); ` +
-        `Start-Sleep -Milliseconds ${half}; $f.SetLength(0); ` +
-        `$b = [System.Text.Encoding]::UTF8.GetBytes('${rewriteTo.replaceAll("'", "''")}'); ` +
-        `$f.Write($b, 0, $b.Length); $f.Flush(); Start-Sleep -Milliseconds ${half}; $f.Close()`;
-  const child = spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", hold], {
-    stdio: ["ignore", "pipe", "inherit"],
-  });
-
-  const released = new Promise<void>((resolve, reject) => {
-    child.on("error", reject);
-    child.on("exit", () => {
-      resolve();
-    });
-  });
-
-  await new Promise<void>((resolve, reject) => {
-    child.on("error", reject);
-    child.stdout.on("data", (data: Buffer) => {
-      if (data.toString("utf8").includes("locked")) {
-        resolve();
+  const handle = await open(path, rewriteTo === undefined ? "r" : "r+");
+  const released = (async () => {
+    try {
+      if (rewriteTo !== undefined) {
+        await delay(holdMs / 2);
+        await handle.truncate(0);
+        await handle.write(rewriteTo, 0, "utf8");
+        await delay(holdMs / 2);
+      } else {
+        await delay(holdMs);
       }
-    });
-    child.on("exit", (code) => {
-      reject(new Error(`lock helper exited early with code ${String(code)}`));
-    });
-  });
-
+    } finally {
+      await handle.close();
+    }
+  })();
   return { released };
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }
