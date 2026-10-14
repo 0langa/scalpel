@@ -132,14 +132,7 @@ export async function createTool(
       return writeResult;
     }
 
-    const snapshot = await readFileSnapshot(resolved.data, {
-      maxBytes: config.maxReadBytes,
-      suggestedTool: "read_chunk",
-    });
-    if (!snapshot.ok) {
-      return snapshot;
-    }
-
+    const { after } = writeResult.data;
     const warnings = combineWarnings(
       writeResult.data.warnings,
       await recordJournal(config, {
@@ -148,14 +141,14 @@ export async function createTool(
         dry_run: false,
         applied: true,
         before: existing?.ok === true ? snapshotState(existing.data) : undefined,
-        after: snapshotState(snapshot.data),
+        after: snapshotState(after),
       }),
     );
 
     return success({
       ...result,
-      lines: snapshot.data.lineCount,
-      size_bytes: snapshot.data.sizeBytes,
+      lines: after.lineCount,
+      size_bytes: after.sizeBytes,
       ...(warnings.length > 0 ? { warnings } : {}),
     });
   });

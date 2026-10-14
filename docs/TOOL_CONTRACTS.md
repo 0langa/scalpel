@@ -167,6 +167,7 @@ Most full-text mutators reject oversized, binary, or invalid UTF-8 existing file
 
 Shared write behavior:
 
+- `maxReadBytes` limits the file an edit starts from, not its result: an edit that grows a file past the limit is applied and reports success. Result fields that describe the written file (`patch` `sha256`, `append`/`prepend` `new_total_lines`, `create` `lines` and `size_bytes`) come from the check Scalpel makes right after the commit, not from a later read
 - an existing target must be writable by the Scalpel process; read-only files fail with `PERMISSION_DENIED` instead of being replaced through the directory
 - the target's parent directory must still resolve (through any symlinks or junctions, for example a directory created as a link by another process after the path was validated) inside a configured root when the write commits, or the write fails with `SYMLINK_NOT_ALLOWED`
 - the target's identity (device, inode, size, mtime) and its parent directory's identity are checked again immediately before the rename (and before every Windows retry), so a file that another process modifies or replaces while the replacement is being written (which can take seconds on the streaming paths), or a parent directory swapped for a symlink or junction, fails with `CONCURRENCY_CONFLICT` instead of losing that change or writing outside the roots

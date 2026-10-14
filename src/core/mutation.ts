@@ -158,9 +158,14 @@ export function hasMutationPreconditions(input: MutationPreconditionInput): bool
   return input.expected_sha256 !== undefined || input.expected_mtime_ms !== undefined;
 }
 
+// `after` is the file as verified right after the commit. Callers report it
+// instead of reading the file again: a read bound by maxReadBytes fails once an
+// edit grows the file past the limit, after the edit is already on disk (a
+// client that retries would apply it twice), and a later read could report a
+// change another process made after the verification as Scalpel's own.
 export async function writeTextFileForMutation(
   input: MutationWriteInput,
-): Promise<DomainResult<{ warnings: string[] }>> {
+): Promise<DomainResult<{ warnings: string[]; after: FileSnapshot }>> {
   await runHardeningInterference(input.path, "BEFORE_COMMIT");
 
   const containment = await validateParentInsideRoots(input.path, input.roots);
@@ -193,12 +198,14 @@ export async function writeTextFileForMutation(
     return verification;
   }
 
-  return success({ warnings });
+  return success({ warnings, after: verification.data });
 }
 
+// `after` is the file as verified right after the commit, as for
+// writeTextFileForMutation.
 export async function writeTextFileStreamForMutation(
   input: StreamingMutationWriteInput,
-): Promise<DomainResult<{ warnings: string[] }>> {
+): Promise<DomainResult<{ warnings: string[]; after: FileStat }>> {
   await runHardeningInterference(input.path, "BEFORE_COMMIT");
 
   const containment = await validateParentInsideRoots(input.path, input.roots);
@@ -233,7 +240,7 @@ export async function writeTextFileStreamForMutation(
     return verification;
   }
 
-  return success({ warnings });
+  return success({ warnings, after: verification.data });
 }
 
 async function validateCommitGuard(input: MutationWriteInput): Promise<DomainResult<undefined>> {
@@ -379,12 +386,15 @@ async function validateStreamingCommitGuard(
   return success(undefined);
 }
 
-async function verifyCommittedContent(input: MutationWriteInput): Promise<DomainResult<undefined>> {
+async function verifyCommittedContent(
+  input: MutationWriteInput,
+): Promise<DomainResult<FileSnapshot>> {
   const symlinkCheck = await validatePathIsNotSymlink(input.path);
   if (!symlinkCheck.ok) {
     return symlinkCheck;
   }
 
+  // The limit applies to the file before the edit; the new content may be larger.
   const maxBytes = Math.max(input.maxReadBytes ?? 0, Buffer.byteLength(input.content, "utf8"));
   const current = await readFileSnapshot(input.path, {
     maxBytes,
@@ -415,12 +425,12 @@ async function verifyCommittedContent(input: MutationWriteInput): Promise<Domain
     );
   }
 
-  return success(undefined);
+  return current;
 }
 
 async function verifyCommittedStreamContent(
   input: StreamingMutationWriteInput,
-): Promise<DomainResult<undefined>> {
+): Promise<DomainResult<FileStat>> {
   const symlinkCheck = await validatePathIsNotSymlink(input.path);
   if (!symlinkCheck.ok) {
     return symlinkCheck;
@@ -451,7 +461,7 @@ async function verifyCommittedStreamContent(
     );
   }
 
-  return success(undefined);
+  return current;
 }
 
 export async function validatePathIsNotSymlink(path: string): Promise<DomainResult<undefined>> {

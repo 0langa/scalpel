@@ -9,7 +9,6 @@ import { combineWarnings, recordJournal, snapshotState, textState } from "../cor
 import {
   readOptionalSnapshotForMutation,
   readPathStatForMutation,
-  readSnapshotForMutation,
   writeTextFileStreamForMutation,
   writeTextFileForMutation,
 } from "../core/mutation.js";
@@ -110,14 +109,7 @@ export async function appendTool(
       return writeResult;
     }
 
-    const snapshot = await readSnapshotForMutation({
-      path: resolved.data,
-      maxReadBytes: config.maxReadBytes,
-    });
-    if (!snapshot.ok) {
-      return snapshot;
-    }
-
+    const { after } = writeResult.data;
     const warnings = combineWarnings(
       writeResult.data.warnings,
       await recordJournal(config, {
@@ -126,13 +118,13 @@ export async function appendTool(
         dry_run: false,
         applied: true,
         before: snapshotState(before.data),
-        after: snapshotState(snapshot.data),
+        after: snapshotState(after),
       }),
     );
 
     return success({
       ...result,
-      new_total_lines: snapshot.data.lineCount,
+      new_total_lines: after.lineCount,
       ...(warnings.length > 0 ? { warnings } : {}),
     });
   });
@@ -187,11 +179,7 @@ async function appendLargeExistingFile(
     return writeResult;
   }
 
-  const after = await readPathStatForMutation({ path, maxReadBytes: config.maxReadBytes });
-  if (!after.ok) {
-    return after;
-  }
-
+  const { after } = writeResult.data;
   const warnings = combineWarnings(
     writeResult.data.warnings,
     await recordJournal(config, {
@@ -200,14 +188,14 @@ async function appendLargeExistingFile(
       dry_run: false,
       applied: true,
       before: snapshotState(before.data),
-      after: snapshotState(after.data),
+      after: snapshotState(after),
     }),
   );
 
   return success({
     absolutePath: path,
     lines_added: countInsertedLines(input.content),
-    new_total_lines: after.data.lineCount,
+    new_total_lines: after.lineCount,
     applied: true,
     ...(warnings.length > 0 ? { warnings } : {}),
   });

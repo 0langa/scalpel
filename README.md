@@ -110,7 +110,7 @@ pnpm validate
 - Existing symlinks in the traversed path are rejected; `grep` and `list_dir` report symlinks and junctions instead of following them.
 - Hidden paths are blocked when `allowHiddenPaths` is disabled.
 - Read-only files are not replaced: mutating tools fail with `PERMISSION_DENIED`. Replacing a file keeps its permission bits on POSIX; the replacement stays owner-only (`0600`) until its content is complete.
-- Full-text tools reject files above `maxReadBytes` with `FILE_TOO_LARGE`; use `read_chunk` for bounded reads.
+- Full-text tools reject files above `maxReadBytes` with `FILE_TOO_LARGE`; use `read_chunk` for bounded reads. The limit applies to the file an edit starts from, so an edit that grows a file past it still succeeds.
 - Binary and invalid UTF-8 files fail with explicit text-tool errors.
 - Mutating tools support `dry_run`; content tools return unified diffs and `move` returns a move plan.
 - Operation journaling is optional and records metadata only, never file content.

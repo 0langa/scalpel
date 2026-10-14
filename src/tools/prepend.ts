@@ -9,7 +9,6 @@ import { combineWarnings, recordJournal, snapshotState, textState } from "../cor
 import {
   readOptionalSnapshotForMutation,
   readPathStatForMutation,
-  readSnapshotForMutation,
   writeTextFileStreamForMutation,
   writeTextFileForMutation,
 } from "../core/mutation.js";
@@ -109,14 +108,7 @@ export async function prependTool(
       return writeResult;
     }
 
-    const after = await readSnapshotForMutation({
-      path: resolved.data,
-      maxReadBytes: config.maxReadBytes,
-    });
-    if (!after.ok) {
-      return after;
-    }
-
+    const { after } = writeResult.data;
     const warnings = combineWarnings(
       writeResult.data.warnings,
       await recordJournal(config, {
@@ -125,13 +117,13 @@ export async function prependTool(
         dry_run: false,
         applied: true,
         before: snapshotState(before.data),
-        after: snapshotState(after.data),
+        after: snapshotState(after),
       }),
     );
 
     return success({
       ...result,
-      new_total_lines: after.data.lineCount,
+      new_total_lines: after.lineCount,
       ...(warnings.length > 0 ? { warnings } : {}),
     });
   });
@@ -191,11 +183,7 @@ async function prependLargeExistingFile(
     return writeResult;
   }
 
-  const after = await readPathStatForMutation({ path, maxReadBytes: config.maxReadBytes });
-  if (!after.ok) {
-    return after;
-  }
-
+  const { after } = writeResult.data;
   const warnings = combineWarnings(
     writeResult.data.warnings,
     await recordJournal(config, {
@@ -204,14 +192,14 @@ async function prependLargeExistingFile(
       dry_run: false,
       applied: true,
       before: snapshotState(before.data),
-      after: snapshotState(after.data),
+      after: snapshotState(after),
     }),
   );
 
   return success({
     absolutePath: path,
     lines_added: countInsertedLines(input.content),
-    new_total_lines: after.data.lineCount,
+    new_total_lines: after.lineCount,
     applied: true,
     ...(warnings.length > 0 ? { warnings } : {}),
   });

@@ -117,14 +117,8 @@ export async function patchTool(
     if (!writeResult.ok) {
       return writeResult;
     }
-    const updated = await readSnapshotForMutation({
-      path: resolved.data,
-      maxReadBytes: config.maxReadBytes,
-    });
-    if (!updated.ok) {
-      return updated;
-    }
 
+    const { after } = writeResult.data;
     const warnings = combineWarnings(
       writeResult.data.warnings,
       await recordJournal(config, {
@@ -133,7 +127,7 @@ export async function patchTool(
         dry_run: false,
         applied: true,
         before: snapshotState(snapshot.data),
-        after: snapshotState(updated.data),
+        after: snapshotState(after),
       }),
     );
 
@@ -142,7 +136,7 @@ export async function patchTool(
       replacements: plan.data.replacements,
       diff,
       applied: true,
-      sha256: updated.data.sha256,
+      sha256: after.sha256,
       ...(warnings.length > 0 ? { warnings } : {}),
     });
   });
@@ -220,11 +214,7 @@ async function patchLargeExistingFile(
     return writeResult;
   }
 
-  const after = await readPathStatForMutation({ path, maxReadBytes: config.maxReadBytes });
-  if (!after.ok) {
-    return after;
-  }
-
+  const { after } = writeResult.data;
   const warnings = combineWarnings(
     writeResult.data.warnings,
     await recordJournal(config, {
@@ -233,7 +223,7 @@ async function patchLargeExistingFile(
       dry_run: false,
       applied: true,
       before: snapshotState(before.data),
-      after: snapshotState(after.data),
+      after: snapshotState(after),
     }),
   );
 
@@ -241,7 +231,7 @@ async function patchLargeExistingFile(
     absolutePath: path,
     replacements: plan.data.replacements,
     applied: true,
-    sha256: after.data.sha256 ?? plan.data.afterSha256,
+    sha256: after.sha256 ?? plan.data.afterSha256,
     ...(warnings.length > 0 ? { warnings } : {}),
   });
 }
