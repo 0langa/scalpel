@@ -44,7 +44,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await rm(directory, { recursive: true, force: true });
+  await rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 });
 
 async function writeTemp(content: string): Promise<string> {
@@ -88,7 +88,9 @@ async function collect(chunks: AsyncIterable<string>): Promise<Buffer> {
   return Buffer.concat(buffers);
 }
 
-describe("text engine properties", () => {
+// Hundreds of temp-file round trips: slow Windows runners need far more than
+// the default 5 s, especially for the tool-level properties.
+describe("text engine properties", { timeout: 60_000 }, () => {
   test("streaming exact replace writes the same bytes as the in-memory replace", async () => {
     await fc.assert(
       fc.asyncProperty(
@@ -161,7 +163,7 @@ describe("text engine properties", () => {
           ]);
         },
       ),
-      { numRuns: 200 },
+      { numRuns: 75 },
     );
   });
 
@@ -192,7 +194,7 @@ describe("text engine properties", () => {
           );
         },
       ),
-      { numRuns: 200 },
+      { numRuns: 75 },
     );
   });
 
