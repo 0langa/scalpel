@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, open, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { arch, platform, release, version as osVersion } from "node:os";
-import { join, resolve } from "node:path";
+import { join, resolve, sep } from "node:path";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
@@ -364,7 +364,9 @@ async function runCorpusSuite(corpusReports: Report["corpora"]): Promise<void> {
       await timedCheck(`${corpus.name}: path escape rejected`, "required", async () => {
         const result = await client.callTool({
           name: "read",
-          arguments: { path: "..\\outside.txt" },
+          // A backslash only separates path segments on Windows; on POSIX
+          // "..\outside.txt" is an ordinary file name inside the root.
+          arguments: { path: `..${sep}outside.txt` },
         });
         assert(result.isError === true, "path escape unexpectedly succeeded");
         assert(

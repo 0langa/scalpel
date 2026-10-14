@@ -39,6 +39,23 @@ describe("resolveWorkspacePath", () => {
     });
   });
 
+  test("treats a backslash as a separator only on Windows", async () => {
+    await withTempDir(async (root) => {
+      const result = await resolveWorkspacePath({
+        path: "..\\outside.txt",
+        roots: [root],
+        operation: "read"
+      });
+
+      if (process.platform === "win32") {
+        expect(result).toMatchObject({ ok: false, error: { code: "PATH_OUTSIDE_ROOT" } });
+      } else {
+        // An ordinary (if odd) file name directly inside the root.
+        expect(result).toMatchObject({ ok: true, data: join(root, "..\\outside.txt") });
+      }
+    });
+  });
+
   test("rejects a path that escapes the configured root", async () => {
     await withTempDir(async (root) => {
       const result = await resolveWorkspacePath({
