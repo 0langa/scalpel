@@ -191,6 +191,52 @@ describe("read-only tools", () => {
     });
   });
 
+  test("ranged reads are bounded by maxReadBytes too", async () => {
+    await withTempDir(async (root) => {
+      await writeFile(join(root, "large.txt"), `short\n${"x".repeat(100)}\nshort\n`, "utf8");
+
+      const config = createConfig({ roots: [root], maxReadBytes: 16 });
+      const open = await readTool({ path: "large.txt", start_line: 1 }, config);
+      expect(open).toMatchObject({
+        ok: false,
+        error: { code: "FILE_TOO_LARGE", details: { max_bytes: 16, suggested_tool: "read_chunk" } },
+      });
+
+      const narrow = await readTool({ path: "large.txt", start_line: 3, end_line: 3 }, config);
+      expect(narrow).toMatchObject({ ok: true, data: { content: "short\n", lines: 3 } });
+    });
+  });
+
+  test("ranged reads past the end of a non-empty file fail instead of reporting zero lines", async () => {
+    await withTempDir(async (root) => {
+      await writeFile(join(root, "five.txt"), "1\n2\n3\n4\n5\n", "utf8");
+
+      const config = createConfig({ roots: [root] });
+      const result = await readTool({ path: "five.txt", start_line: 10 }, config);
+
+      expect(result).toMatchObject({
+        ok: false,
+        error: { code: "INVALID_LINE_RANGE", details: { total_lines: 5 } },
+      });
+    });
+  });
+
+  test("ranged reads keep CRLF line endings that straddle read chunks", async () => {
+    await withTempDir(async (root) => {
+      // 65_535 bytes of "a" puts the CR at the end of the first 64 KiB chunk.
+      const first = `${"a".repeat(65_535)}\r\n`;
+      await writeFile(join(root, "crlf.txt"), `${first}second\r\nthird`, "utf8");
+
+      const config = createConfig({ roots: [root], maxReadBytes: 1024 * 1024 });
+      const result = await readTool({ path: "crlf.txt", start_line: 2, end_line: 3 }, config);
+
+      expect(result).toMatchObject({
+        ok: true,
+        data: { content: "second\r\nthird", lines: 3, eol: "\r\n" },
+      });
+    });
+  });
+
   test("read_chunk returns bounded UTF-8 chunks", async () => {
     await withTempDir(async (root) => {
       await writeFile(join(root, "chunk.txt"), "a🙂b\n", "utf8");

@@ -37,7 +37,8 @@ export async function readTool(
     ? await readLineRangeSnapshot(
         resolved.data,
         input.start_line ?? 1,
-        input.end_line ?? Number.MAX_SAFE_INTEGER
+        input.end_line ?? Number.MAX_SAFE_INTEGER,
+        { maxContentBytes: config.maxReadBytes }
       )
     : await readFileSnapshot(resolved.data, {
         maxBytes: config.maxReadBytes,
@@ -47,7 +48,10 @@ export async function readTool(
     return snapshot;
   }
 
-  if (snapshot.data.content.length === 0) {
+  // Only a genuinely empty file gets the empty-file contract. A range that
+  // starts past the end of a non-empty file must fail the range check below
+  // instead of reporting `lines: 0`.
+  if (snapshot.data.lineCount === 0) {
     return success({
       absolutePath: snapshot.data.absolutePath,
       content: "",
