@@ -8,9 +8,9 @@ import { beginWriteTransaction } from "./write-transaction.js";
 type WriteFileAtomicOptions = {
   durability?: "default" | "strict";
   transactionDir?: string | undefined;
-  // Runs once the temp file is complete, immediately before it replaces the
-  // target. Throwing aborts the write: the temp file and transaction record
-  // are removed and the target is left untouched.
+  // Runs once the temp file is complete, immediately before each attempt to
+  // rename it over the target. Throwing aborts the write: the temp file and
+  // transaction record are removed and the target is left untouched.
   beforeRename?: (() => Promise<void>) | undefined;
 };
 
@@ -67,8 +67,7 @@ export async function writeFileAtomicStream(
 
     await transaction?.markTempWritten();
     crashIfFaultPoint("text_write.after_temp_written");
-    await options.beforeRename?.();
-    await renameWithRetry(tempPath, path);
+    await renameWithRetry(tempPath, path, options.beforeRename);
     renamed = true;
     crashIfFaultPoint("text_write.after_rename");
     await transaction?.markRenamed();
@@ -98,8 +97,16 @@ const TRANSIENT_RENAME_ERROR_CODES = new Set(["EPERM", "EACCES", "EBUSY"]);
 // without delete sharing. Those locks are usually released within
 // milliseconds, so retry with a short backoff before giving up. Other
 // platforms do not have this failure mode and rename once.
-export async function renameWithRetry(from: string, to: string): Promise<void> {
+//
+// `beforeAttempt` runs before every attempt, so a precondition is rechecked
+// after each wait: the process holding the file may have changed it.
+export async function renameWithRetry(
+  from: string,
+  to: string,
+  beforeAttempt?: () => Promise<void>,
+): Promise<void> {
   if (process.platform !== "win32") {
+    await beforeAttempt?.();
     await rename(from, to);
     return;
   }
@@ -107,6 +114,7 @@ export async function renameWithRetry(from: string, to: string): Promise<void> {
   const budgetMs = renameRetryBudgetMs();
   const started = Date.now();
   for (let attempt = 1; ; attempt += 1) {
+    await beforeAttempt?.();
     try {
       await rename(from, to);
       return;
