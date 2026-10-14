@@ -27,6 +27,18 @@ describe("resolveWorkspacePath", () => {
     });
   });
 
+  test("accepts names that merely start with two dots", async () => {
+    await withTempDir(async (root) => {
+      await writeFile(join(root, "..notes.txt"), "hello\n", "utf8");
+      await mkdir(join(root, "..cache"), { recursive: true });
+
+      for (const path of ["..notes.txt", "..cache/entry.json", join(root, "..notes.txt")]) {
+        const result = await resolveWorkspacePath({ path, roots: [root], operation: "read" });
+        expect(result.ok, path).toBe(true);
+      }
+    });
+  });
+
   test("rejects a path that escapes the configured root", async () => {
     await withTempDir(async (root) => {
       const result = await resolveWorkspacePath({

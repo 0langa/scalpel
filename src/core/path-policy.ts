@@ -21,19 +21,7 @@ export async function resolveWorkspacePath(
 
   const candidate = isAbsolute(input.path) ? resolve(input.path) : resolve(firstRoot, input.path);
 
-  const isInsideRoot = roots.some((root) => {
-    const rel = relative(root, candidate);
-    return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
-  });
-
-  if (!isInsideRoot) {
-    return failure("PATH_OUTSIDE_ROOT", `Path escapes configured roots: ${input.path}`, candidate);
-  }
-
-  const containingRoot = roots.find((root) => {
-    const rel = relative(root, candidate);
-    return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
-  });
+  const containingRoot = roots.find((root) => isInside(root, candidate));
 
   if (containingRoot === undefined) {
     return failure("PATH_OUTSIDE_ROOT", `Path escapes configured roots: ${input.path}`, candidate);
@@ -49,6 +37,13 @@ export async function resolveWorkspacePath(
   }
 
   return { ...success(candidate), value: candidate };
+}
+
+// A `..` segment, not just a leading "..": `..cache` or `..notes.txt` directly
+// under a root are ordinary names inside it.
+function isInside(root: string, candidate: string): boolean {
+  const rel = relative(root, candidate);
+  return rel === "" || (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
 }
 
 async function validatePathTraversal(
