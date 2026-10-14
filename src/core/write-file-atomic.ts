@@ -52,7 +52,7 @@ export async function writeFileAtomicStream(
 
   let renamed = false;
   try {
-    const handle = await open(tempPath, "wx");
+    const handle = await open(tempPath, "wx", tempFileMode(existingMode));
     try {
       for await (const chunk of chunks) {
         await handle.writeFile(chunk, typeof chunk === "string" ? "utf8" : undefined);
@@ -156,10 +156,26 @@ async function readExistingMode(path: string): Promise<number | undefined> {
   }
 }
 
-// The temp file is created with default permissions, so without this an edit
-// would silently drop the executable bit (or any other mode) of the file it
-// replaces. Windows only maps the read-only attribute onto mode bits, and
-// read-only targets are rejected before writing, so there is nothing to copy.
+// The mode the temp file is created with; the umask still applies. A
+// replacement is created owner-only and only gets the target's own mode from
+// preserveMode() once its content is written: with the default mode (0666
+// minus the umask, usually 0644), other users could read the new content of an
+// owner-only file, such as a 0600 secret, while it is being written. A new
+// file has no mode to keep and is created with the default one, as before. On
+// Windows the mode only decides the read-only attribute, and both values give
+// an ordinary writable file. ACLs, Windows or POSIX, are not copied either way.
+function tempFileMode(existingMode: number | undefined): number {
+  return existingMode === undefined ? 0o666 : 0o600;
+}
+
+// Gives the finished temp file the exact mode of the file it replaces: it was
+// created owner-only (see tempFileMode()), so without this an edit would leave
+// the file 0600 and drop its executable bit or any other mode. It runs after
+// the content is written and before the strict-mode fsync, which then flushes
+// the mode with the data. If chmod is refused, the replacement keeps the temp
+// file's mode, narrower than the target's rather than wider. Windows only maps
+// the read-only attribute onto mode bits, and read-only targets are rejected
+// before writing, so there is nothing to copy.
 async function preserveMode(
   handle: FileHandle,
   mode: number | undefined,

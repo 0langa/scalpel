@@ -9,6 +9,7 @@ All notable changes to Scalpel are documented here.
 - Startup recovery no longer trusts records in the in-workspace transaction directory: it only deletes `.scalpel-*.tmp` files beside the record's target (a crafted record could delete any file before) and does not scan a symlinked or junctioned transaction directory (which could move or delete unrelated `*.json` files). Records that name paths outside the configured roots, directly or through a link, are left untouched, and records are never quarantined through a linked `quarantine` directory.
 - `grep` no longer follows symlinks or junctions out of the configured roots; links are reported in `skipped_files` with reason `symlink` (a configured root that is itself a link is still searched).
 - The operation journal is never appended through a symlink.
+- On POSIX, editing an owner-only file (for example a `0600` secret) made its new content readable by other users, because the replacement was written with the default mode (usually `0644`). The replacement is now created `0600` and gets the file's own mode only once its content is complete.
 - Writes and moves now re-resolve their directories when they commit and recheck the target's and parent's identity right before the rename: a directory created as, or swapped for, a junction after validation could make `create` and `move` write outside the roots (or pull an outside file in) while reporting success.
 - `@modelcontextprotocol/sdk` 1.32.1 and patched transitive dependencies (`pnpm audit` was reporting 32 advisories, all through the SDK).
 

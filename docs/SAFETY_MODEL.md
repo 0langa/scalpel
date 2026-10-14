@@ -195,10 +195,12 @@ This gives best-effort local filesystem replacement atomicity.
 
 Because the rename only needs write access to the directory, Scalpel checks the
 target's own write permission first and refuses read-only files with
-`PERMISSION_DENIED`. On POSIX the temp file gets the replaced file's permission
-bits before the rename. On Windows, a rename that fails because another process
-holds the target open without delete sharing (antivirus, indexers, sync
-clients, editors) is retried with a short backoff for up to
+`PERMISSION_DENIED`. On POSIX the temp file of a replacement is created
+owner-only (`0600`) and gets the replaced file's permission bits once its
+content is written, before the rename, so the new content is never readable by
+more users than the file it replaces. On Windows, a rename that fails because
+another process holds the target open without delete sharing (antivirus,
+indexers, sync clients, editors) is retried with a short backoff for up to
 `SCALPEL_RENAME_RETRY_MS` (default 5000 ms); the target is untouched until a
 rename succeeds.
 

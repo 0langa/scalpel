@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { chmod, mkdir, readdir, readFile, rename, stat, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -11,6 +12,29 @@ import {
 } from "../../../src/core/write-transaction.js";
 import { withTempDir } from "../../helpers/temp.js";
 import { holdWindowsFileLock } from "../../helpers/windows-lock.js";
+
+// process.umask() is process-wide, so it is restored as soon as `run` settles.
+async function withUmask<T>(mask: number, run: () => Promise<T>): Promise<T> {
+  const previous = process.umask(mask);
+  try {
+    return await run();
+  } finally {
+    process.umask(previous);
+  }
+}
+
+// The permission bits of the one `.scalpel-*.tmp` file a write in `directory`
+// has open.
+async function openTempFileMode(directory: string): Promise<number> {
+  const temps = (await readdir(directory)).filter(
+    (name) => name.startsWith(".scalpel-") && name.endsWith(".tmp"),
+  );
+  const [temp] = temps;
+  if (temp === undefined || temps.length !== 1) {
+    throw new Error(`expected one temp file in ${directory}, found ${String(temps.length)}`);
+  }
+  return (await stat(join(directory, temp))).mode & 0o7777;
+}
 
 describe("writeFileAtomic", () => {
   test("default mode writes through a temp file and leaves no temp files behind", async () => {
@@ -104,6 +128,60 @@ describe("writeFileAtomic", () => {
 
       expect((await stat(filePath)).mode & 0o777).toBe(0o750);
       await expect(readFile(filePath, "utf8")).resolves.toBe("#!/bin/sh\necho new\n");
+    });
+  });
+
+  test.skipIf(process.platform === "win32").each([
+    { label: "0600", mode: 0o600 },
+    { label: "0640", mode: 0o640 },
+    { label: "0755", mode: 0o755 },
+  ])(
+    "the replacement of a $label file is owner-only while its content is written",
+    async ({ mode }) => {
+      await withTempDir(async (root) => {
+        const filePath = join(root, "target");
+        await writeFile(filePath, "old\n", "utf8");
+        await chmod(filePath, mode);
+        const content = "new\ncontent\n";
+
+        // Runs while the temp file is open: before the first chunk is written,
+        // between the chunks, and after the last one.
+        const tempModes: number[] = [];
+        async function* chunks(): AsyncIterable<string> {
+          tempModes.push(await openTempFileMode(root));
+          yield "new\n";
+          tempModes.push(await openTempFileMode(root));
+          yield "content\n";
+          tempModes.push(await openTempFileMode(root));
+        }
+
+        // Under this umask, a temp file created with the default mode would be
+        // readable by group and others (0644).
+        await withUmask(0o022, () =>
+          writeFileAtomicStream(filePath, chunks(), {
+            afterSha256: createHash("sha256").update(content).digest("hex"),
+            afterSizeBytes: Buffer.byteLength(content, "utf8"),
+          }),
+        );
+
+        expect(tempModes).toHaveLength(3);
+        for (const tempMode of tempModes) {
+          expect(tempMode & ~0o600, `temp file mode ${tempMode.toString(8)}`).toBe(0);
+        }
+        expect((await stat(filePath)).mode & 0o7777).toBe(mode);
+        await expect(readFile(filePath, "utf8")).resolves.toBe(content);
+        await expect(readdir(root)).resolves.toEqual(["target"]);
+      });
+    },
+  );
+
+  test.skipIf(process.platform === "win32")("a new file still gets 0666 minus the umask", async () => {
+    await withTempDir(async (root) => {
+      const filePath = join(root, "new.txt");
+
+      await withUmask(0o022, () => writeFileAtomic(filePath, "new\n"));
+
+      expect((await stat(filePath)).mode & 0o7777).toBe(0o644);
     });
   });
 
