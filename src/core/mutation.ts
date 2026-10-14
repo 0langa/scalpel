@@ -155,15 +155,25 @@ export async function writeTextFileForMutation(
 ): Promise<DomainResult<{ warnings: string[] }>> {
   await runHardeningInterference(input.path, "BEFORE_COMMIT");
 
+  const identity = await readTargetIdentity(input.path);
   const guard = await validateCommitGuard(input);
   if (!guard.ok) {
     return guard;
   }
 
-  const warnings = await writeFileAtomic(input.path, input.content, {
-    ...(input.durability !== undefined ? { durability: input.durability } : {}),
-    ...(input.transactionDir !== undefined ? { transactionDir: input.transactionDir } : {}),
-  });
+  let warnings: string[];
+  try {
+    warnings = await writeFileAtomic(input.path, input.content, {
+      ...(input.durability !== undefined ? { durability: input.durability } : {}),
+      ...(input.transactionDir !== undefined ? { transactionDir: input.transactionDir } : {}),
+      beforeRename: () => assertTargetUnchanged(input.path, identity),
+    });
+  } catch (error) {
+    if (error instanceof TargetChangedError) {
+      return failure("CONCURRENCY_CONFLICT", error.message, input.path);
+    }
+    throw error;
+  }
   await runHardeningInterference(input.path, "AFTER_COMMIT");
 
   const verification = await verifyCommittedContent(input);
@@ -179,17 +189,27 @@ export async function writeTextFileStreamForMutation(
 ): Promise<DomainResult<{ warnings: string[] }>> {
   await runHardeningInterference(input.path, "BEFORE_COMMIT");
 
+  const identity = await readTargetIdentity(input.path);
   const guard = await validateStreamingCommitGuard(input);
   if (!guard.ok) {
     return guard;
   }
 
-  const warnings = await writeFileAtomicStream(input.path, input.chunks, {
-    afterSha256: input.afterSha256,
-    afterSizeBytes: input.afterSizeBytes,
-    ...(input.durability !== undefined ? { durability: input.durability } : {}),
-    ...(input.transactionDir !== undefined ? { transactionDir: input.transactionDir } : {}),
-  });
+  let warnings: string[];
+  try {
+    warnings = await writeFileAtomicStream(input.path, input.chunks, {
+      afterSha256: input.afterSha256,
+      afterSizeBytes: input.afterSizeBytes,
+      ...(input.durability !== undefined ? { durability: input.durability } : {}),
+      ...(input.transactionDir !== undefined ? { transactionDir: input.transactionDir } : {}),
+      beforeRename: () => assertTargetUnchanged(input.path, identity),
+    });
+  } catch (error) {
+    if (error instanceof TargetChangedError) {
+      return failure("CONCURRENCY_CONFLICT", error.message, input.path);
+    }
+    throw error;
+  }
   await runHardeningInterference(input.path, "AFTER_COMMIT");
 
   const verification = await verifyCommittedStreamContent(input);
@@ -433,6 +453,40 @@ export async function validatePathIsNotSymlink(path: string): Promise<DomainResu
   }
 
   return success(undefined);
+}
+
+class TargetChangedError extends Error {}
+
+type TargetIdentity = { dev: number; ino: number; size: number; mtimeMs: number } | "absent";
+
+async function readTargetIdentity(path: string): Promise<TargetIdentity> {
+  try {
+    const info = await lstat(path);
+    return { dev: info.dev, ino: info.ino, size: info.size, mtimeMs: info.mtimeMs };
+  } catch (error) {
+    if (errorCode(error) === "ENOENT") {
+      return "absent";
+    }
+    throw error;
+  }
+}
+
+// The commit guard checks content before the temp file is written, but writing
+// it (streaming a large file can take seconds) leaves a window in which another
+// process can replace or modify the target, and the rename would silently
+// discard that change. Re-check the target's identity right before the rename.
+async function assertTargetUnchanged(path: string, expected: TargetIdentity): Promise<void> {
+  const current = await readTargetIdentity(path);
+  const unchanged =
+    expected === "absent" || current === "absent"
+      ? expected === current
+      : expected.dev === current.dev &&
+        expected.ino === current.ino &&
+        expected.size === current.size &&
+        expected.mtimeMs === current.mtimeMs;
+  if (!unchanged) {
+    throw new TargetChangedError("File changed while Scalpel was writing its replacement");
+  }
 }
 
 // Atomic replacement only needs write access to the directory, so without this

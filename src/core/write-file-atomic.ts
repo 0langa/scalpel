@@ -8,6 +8,10 @@ import { beginWriteTransaction } from "./write-transaction.js";
 type WriteFileAtomicOptions = {
   durability?: "default" | "strict";
   transactionDir?: string | undefined;
+  // Runs once the temp file is complete, immediately before it replaces the
+  // target. Throwing aborts the write: the temp file and transaction record
+  // are removed and the target is left untouched.
+  beforeRename?: (() => Promise<void>) | undefined;
 };
 
 type WriteFileAtomicStreamOptions = WriteFileAtomicOptions & {
@@ -63,6 +67,7 @@ export async function writeFileAtomicStream(
 
     await transaction?.markTempWritten();
     crashIfFaultPoint("text_write.after_temp_written");
+    await options.beforeRename?.();
     await renameWithRetry(tempPath, path);
     renamed = true;
     crashIfFaultPoint("text_write.after_rename");

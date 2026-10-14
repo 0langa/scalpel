@@ -250,7 +250,7 @@ machine-readable evidence:
 | Full-file memory loading | Most full-text mutators still require whole-file UTF-8 snapshots under `maxReadBytes`; `append` and `prepend` have oversized UTF-8 streaming paths, and `read_chunk` plus ranged `read` are bounded read paths | Large edit workloads still need broader streaming edit design |
 | Failure payload compatibility | Failure keeps text plus `structuredContent.error` | Older clients still parse text; newer agents can use structured errors |
 | Durability | Default mode uses rename without explicit `fsync`; strict mode flushes file content and attempts parent directory flush | Power loss can leave uncertain persistence, especially where directory flush is unsupported |
-| Race windows | Path validation and write are separate steps | Files can change between validation and operation |
+| Race windows | Path validation and write are separate steps; content is revalidated before the temp file is written and the target's identity (device, inode, size, mtime) again immediately before the rename | A change between that last check and the rename itself, or one that preserves identity, can still be overwritten |
 | Binary files | Text tools detect and reject binary/non-UTF-8 files; binary editing is unsupported | Prevents corruption but does not provide byte-edit workflows |
 | Search traversal | Sequential recursive traversal | Slow for large trees |
 | Native acceleration | None | Future performance targets require new layer |
