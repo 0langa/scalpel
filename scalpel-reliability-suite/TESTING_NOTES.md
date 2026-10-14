@@ -147,7 +147,7 @@ This document describes every important file in the `scalpel-reliability-suite` 
 
 ---
 
-## `docs/CONTRIBUTING.md` — Repeated Strings File
+## `docs/REPEATED_STRINGS.md` — Repeated Strings File
 
 **Purpose:** Tests `grep` and `patch` on deliberately repeated content.
 

@@ -107,8 +107,9 @@ pnpm validate
 - If `SCALPEL_ROOTS` is unset, Scalpel defaults to the current working directory it was started in.
 - `config` reports the live roots for the current MCP server process.
 - Existing Codex/MCP client threads may need a server reload or new thread before newly added tool schemas appear.
-- Existing symlinks in the traversed path are rejected.
+- Existing symlinks in the traversed path are rejected; `grep` and `list_dir` report symlinks and junctions instead of following them.
 - Hidden paths are blocked when `allowHiddenPaths` is disabled.
+- Read-only files are not replaced: mutating tools fail with `PERMISSION_DENIED`. Replacing a file keeps its permission bits on POSIX; the replacement stays owner-only (`0600`) until its content is complete.
 - Full-text tools reject files above `maxReadBytes` with `FILE_TOO_LARGE`; use `read_chunk` for bounded reads.
 - Binary and invalid UTF-8 files fail with explicit text-tool errors.
 - Mutating tools support `dry_run`; content tools return unified diffs and `move` returns a move plan.
@@ -120,6 +121,7 @@ pnpm validate
 
 - `patch` and `batch_edit` default to `occurrence: "unique"` and fail on ambiguity.
 - `insert` is line-oriented. If inserted content lacks a trailing newline, Scalpel normalizes it to the file's native EOL before splicing.
+- A UTF-8 BOM stays at the start of the file through every edit; line-oriented edits and `prepend` add text after it.
 - `replace_between_markers` preserves the original marker lines exactly once and rejects `new_content` that repeats either marker.
 - `read` succeeds on empty files and returns `content: ""`, `lines: 0`, and `range: { start_line: 1, end_line: 0 }`.
 - Mutating tools support hash and mtime preconditions where the target path exists; missing-file creation rejects supplied expectations.
@@ -155,6 +157,12 @@ SCALPEL_ROOTS=/repo pnpm dev
 - Set to `strict` to flush temp-file content before rename and attempt parent-directory flush
 - Default: best-effort atomic rename without explicit durability flush
 - Parent-directory flush support is platform-dependent; unsupported flushes are reported as warnings
+
+`SCALPEL_RENAME_RETRY_MS`
+
+- Optional
+- Windows only: how long a write or move keeps retrying a rename that another process (antivirus, indexer, sync client, editor) blocks by holding the file open
+- Default: `5000`
 
 ## Safety Model Summary
 

@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
-import { lstat, mkdir, rm, symlink } from "node:fs/promises";
+import { constants } from "node:fs";
+import { access, lstat, mkdir, realpath, rm, symlink } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
 
 import { failure, success, type DomainResult } from "./errors.js";
 import {
@@ -8,6 +10,7 @@ import {
   type FileSnapshot,
   type FileStat,
 } from "./file-metadata.js";
+import { isInside } from "./path-policy.js";
 import { writeFileAtomic, writeFileAtomicStream } from "./write-file-atomic.js";
 
 export type MutationPreconditionInput = {
@@ -24,6 +27,9 @@ export type MutationWriteInput = {
   maxReadBytes?: number | undefined;
   durability?: "default" | "strict" | undefined;
   transactionDir?: string | undefined;
+  // Configured roots: when given, the parent directory must still resolve
+  // inside one of them (through any symlinks) when the write commits.
+  roots?: readonly string[] | undefined;
 };
 
 export type StreamingMutationWriteInput = {
@@ -35,6 +41,9 @@ export type StreamingMutationWriteInput = {
   maxReadBytes?: number | undefined;
   durability?: "default" | "strict" | undefined;
   transactionDir?: string | undefined;
+  // Configured roots: when given, the parent directory must still resolve
+  // inside one of them (through any symlinks) when the write commits.
+  roots?: readonly string[] | undefined;
 };
 
 export async function readSnapshotForMutation(
@@ -154,15 +163,29 @@ export async function writeTextFileForMutation(
 ): Promise<DomainResult<{ warnings: string[] }>> {
   await runHardeningInterference(input.path, "BEFORE_COMMIT");
 
+  const containment = await validateParentInsideRoots(input.path, input.roots);
+  if (!containment.ok) {
+    return containment;
+  }
+  const identity = await readTargetIdentity(input.path);
   const guard = await validateCommitGuard(input);
   if (!guard.ok) {
     return guard;
   }
 
-  const warnings = await writeFileAtomic(input.path, input.content, {
-    ...(input.durability !== undefined ? { durability: input.durability } : {}),
-    ...(input.transactionDir !== undefined ? { transactionDir: input.transactionDir } : {}),
-  });
+  let warnings: string[];
+  try {
+    warnings = await writeFileAtomic(input.path, input.content, {
+      ...(input.durability !== undefined ? { durability: input.durability } : {}),
+      ...(input.transactionDir !== undefined ? { transactionDir: input.transactionDir } : {}),
+      beforeRename: () => assertTargetUnchanged(input.path, identity, input.roots),
+    });
+  } catch (error) {
+    if (error instanceof TargetChangedError) {
+      return failure("CONCURRENCY_CONFLICT", error.message, input.path);
+    }
+    throw error;
+  }
   await runHardeningInterference(input.path, "AFTER_COMMIT");
 
   const verification = await verifyCommittedContent(input);
@@ -178,17 +201,31 @@ export async function writeTextFileStreamForMutation(
 ): Promise<DomainResult<{ warnings: string[] }>> {
   await runHardeningInterference(input.path, "BEFORE_COMMIT");
 
+  const containment = await validateParentInsideRoots(input.path, input.roots);
+  if (!containment.ok) {
+    return containment;
+  }
+  const identity = await readTargetIdentity(input.path);
   const guard = await validateStreamingCommitGuard(input);
   if (!guard.ok) {
     return guard;
   }
 
-  const warnings = await writeFileAtomicStream(input.path, input.chunks, {
-    afterSha256: input.afterSha256,
-    afterSizeBytes: input.afterSizeBytes,
-    ...(input.durability !== undefined ? { durability: input.durability } : {}),
-    ...(input.transactionDir !== undefined ? { transactionDir: input.transactionDir } : {}),
-  });
+  let warnings: string[];
+  try {
+    warnings = await writeFileAtomicStream(input.path, input.chunks, {
+      afterSha256: input.afterSha256,
+      afterSizeBytes: input.afterSizeBytes,
+      ...(input.durability !== undefined ? { durability: input.durability } : {}),
+      ...(input.transactionDir !== undefined ? { transactionDir: input.transactionDir } : {}),
+      beforeRename: () => assertTargetUnchanged(input.path, identity, input.roots),
+    });
+  } catch (error) {
+    if (error instanceof TargetChangedError) {
+      return failure("CONCURRENCY_CONFLICT", error.message, input.path);
+    }
+    throw error;
+  }
   await runHardeningInterference(input.path, "AFTER_COMMIT");
 
   const verification = await verifyCommittedStreamContent(input);
@@ -229,6 +266,11 @@ async function validateCommitGuard(input: MutationWriteInput): Promise<DomainRes
   const symlinkCheck = await validatePathIsNotSymlink(input.path);
   if (!symlinkCheck.ok) {
     return symlinkCheck;
+  }
+
+  const writableCheck = await validateFileIsWritable(input.path);
+  if (!writableCheck.ok) {
+    return writableCheck;
   }
 
   const current = await readFileSnapshot(input.path, {
@@ -295,6 +337,11 @@ async function validateStreamingCommitGuard(
     }
 
     return current;
+  }
+
+  const writableCheck = await validateFileIsWritable(input.path);
+  if (!writableCheck.ok) {
+    return writableCheck;
   }
 
   const current = await readPathStat(input.path, { maxBytes: input.maxReadBytes });
@@ -424,6 +471,137 @@ export async function validatePathIsNotSymlink(path: string): Promise<DomainResu
   return success(undefined);
 }
 
+class TargetChangedError extends Error {}
+
+type EntryIdentity =
+  | { dev: number; ino: number; size: number; mtimeMs: number; symlink: boolean }
+  | "absent";
+
+type TargetIdentity = { target: EntryIdentity; parent: EntryIdentity };
+
+async function readEntryIdentity(path: string): Promise<EntryIdentity> {
+  try {
+    const info = await lstat(path);
+    return {
+      dev: info.dev,
+      ino: info.ino,
+      size: info.size,
+      mtimeMs: info.mtimeMs,
+      symlink: info.isSymbolicLink(),
+    };
+  } catch (error) {
+    if (errorCode(error) === "ENOENT") {
+      return "absent";
+    }
+    throw error;
+  }
+}
+
+async function readTargetIdentity(path: string): Promise<TargetIdentity> {
+  return { target: await readEntryIdentity(path), parent: await readEntryIdentity(dirname(path)) };
+}
+
+function sameEntry(left: EntryIdentity, right: EntryIdentity, compareContent: boolean): boolean {
+  if (left === "absent" || right === "absent") {
+    return left === right;
+  }
+  return (
+    left.dev === right.dev &&
+    left.ino === right.ino &&
+    left.symlink === right.symlink &&
+    (!compareContent || (left.size === right.size && left.mtimeMs === right.mtimeMs))
+  );
+}
+
+// The commit guard checks content before the temp file is written, but writing
+// it (streaming a large file can take seconds) leaves a window in which another
+// process can replace or modify the target, and the rename would silently
+// discard that change. Re-check the target's identity right before the rename.
+// The parent directory is checked by identity only (its mtime changes when the
+// temp file is created): if it, or any ancestor, was swapped for a symlink or
+// junction, lstat() resolves the parent to a different directory.
+async function assertTargetUnchanged(
+  path: string,
+  expected: TargetIdentity,
+  roots: readonly string[] | undefined,
+): Promise<void> {
+  const containment = await validateParentInsideRoots(path, roots);
+  if (!containment.ok) {
+    throw new TargetChangedError(containment.error.message);
+  }
+  const current = await readTargetIdentity(path);
+  if (!sameEntry(expected.parent, current.parent, false)) {
+    throw new TargetChangedError("Parent directory was replaced while Scalpel was writing the file");
+  }
+  if (!sameEntry(expected.target, current.target, true)) {
+    throw new TargetChangedError("File changed while Scalpel was writing its replacement");
+  }
+}
+
+// resolveWorkspacePath() rejects symlinks in the path, but only for segments
+// that existed at that moment. A directory that a concurrent process creates
+// as (or swaps for) a link to somewhere else afterwards would carry the temp
+// file and the rename out of the roots. Resolve the parent for real and
+// require it to still be inside a configured root (also resolved, so a root
+// that itself sits behind a symlink keeps working).
+export async function validateParentInsideRoots(
+  path: string,
+  roots: readonly string[] | undefined,
+): Promise<DomainResult<undefined>> {
+  if (roots === undefined) {
+    return success(undefined);
+  }
+
+  let realParent: string;
+  try {
+    realParent = await realpath(dirname(path));
+  } catch (error) {
+    return failure("FILE_NOT_FOUND", "Parent directory of the target disappeared", path, {
+      ...(errorCode(error) === undefined ? {} : { cause_code: errorCode(error) }),
+    });
+  }
+
+  const realRoots = await Promise.all(
+    roots.map((root) => realpath(root).catch(() => resolve(root))),
+  );
+  if (!realRoots.some((root) => isInside(root, realParent))) {
+    return failure(
+      "SYMLINK_NOT_ALLOWED",
+      "Target directory resolves outside the configured roots through a symlink or junction",
+      path,
+      { resolved_parent: realParent },
+    );
+  }
+
+  return success(undefined);
+}
+
+// Atomic replacement only needs write access to the directory, so without this
+// check Scalpel would replace files the user marked read-only (and on Windows
+// the rename fails with a raw EPERM). Respect the file's own write permission.
+async function validateFileIsWritable(path: string): Promise<DomainResult<undefined>> {
+  try {
+    await access(path, constants.W_OK);
+  } catch (error) {
+    const code = errorCode(error);
+    if (code === "ENOENT") {
+      // A vanished file is reported by the commit guard's content check.
+      return success(undefined);
+    }
+    return failure("PERMISSION_DENIED", "File is read-only or not writable by this process", path, {
+      ...(code === undefined ? {} : { cause_code: code }),
+    });
+  }
+
+  return success(undefined);
+}
+
+function errorCode(error: unknown): string | undefined {
+  return typeof error === "object" && error !== null && "code" in error && typeof error.code === "string"
+    ? error.code
+    : undefined;
+}
+
 export async function runHardeningInterference(
   path: string,
   phase: "BEFORE_COMMIT" | "AFTER_COMMIT",
@@ -442,13 +620,15 @@ export async function runHardeningInterference(
     await mkdir(path, { recursive: true });
     return;
   }
-  if (mode === "symlink") {
+  if (mode === "symlink" || mode === "junction") {
     const target = process.env[`SCALPEL_HARDENING_INTERFERE_${phase}_SYMLINK_TARGET`];
     if (target === undefined) {
       throw new Error(`SCALPEL_HARDENING_INTERFERE_${phase}_SYMLINK_TARGET is required`);
     }
     await rm(path, { recursive: true, force: true });
-    await symlink(target, path, "file");
+    // "junction": a directory link, which Windows lets unprivileged users create.
+    const linkType = mode === "symlink" ? "file" : process.platform === "win32" ? "junction" : "dir";
+    await symlink(target, path, linkType);
     return;
   }
   if (mode === "file") {

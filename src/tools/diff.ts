@@ -23,7 +23,8 @@ export async function diffTool(
   const resolved = await resolveWorkspacePath({
     path: input.path,
     roots: config.roots,
-    operation: "read"
+    operation: "read",
+    allowHiddenPaths: config.allowHiddenPaths
   });
   if (!resolved.ok) {
     return resolved;
@@ -38,13 +39,30 @@ export async function diffTool(
   }
 
   const diff = createUnifiedDiff(resolved.data, snapshot.data.content, input.proposed_content);
-  const linesAdded = diff.split("\n").filter((line) => line.startsWith("+") && !line.startsWith("+++")).length;
-  const linesRemoved = diff.split("\n").filter((line) => line.startsWith("-") && !line.startsWith("---")).length;
+  const { added, removed } = countChangedLines(diff);
 
   return success({
     absolutePath: resolved.data,
     diff,
-    lines_added: linesAdded,
-    lines_removed: linesRemoved
+    lines_added: added,
+    lines_removed: removed
   });
+}
+
+// Only count lines inside hunks. Filtering every "+++"/"---" line instead
+// skipped real content lines such as an added "++counter" or removed "-- note".
+function countChangedLines(diff: string): { added: number; removed: number } {
+  let inHunks = false;
+  let added = 0;
+  let removed = 0;
+  for (const line of diff.split("\n")) {
+    if (line.startsWith("@@")) {
+      inHunks = true;
+    } else if (inHunks && line.startsWith("+")) {
+      added += 1;
+    } else if (inHunks && line.startsWith("-")) {
+      removed += 1;
+    }
+  }
+  return { added, removed };
 }

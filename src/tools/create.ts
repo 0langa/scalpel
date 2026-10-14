@@ -126,6 +126,7 @@ export async function createTool(
       maxReadBytes: config.maxReadBytes,
       durability: config.durability,
       transactionDir: config.transactionDir,
+      roots: config.roots,
     });
     if (!writeResult.ok) {
       return writeResult;

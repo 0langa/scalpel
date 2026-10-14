@@ -1,4 +1,4 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -150,6 +150,112 @@ describe("stdio server", () => {
         error: {
           code: "STRING_NOT_UNIQUE"
         }
+      });
+    });
+  }, 15000);
+
+  test("returns structured error payloads for unexpected filesystem errors", async () => {
+    await withTempDir(async (root) => {
+      await writeFile(join(root, "blocker.txt"), "not a directory\n", "utf8");
+
+      const transport = new StdioClientTransport({
+        command: "node",
+        args: ["--import", "tsx", "src/index.ts"],
+        cwd: process.cwd(),
+        env: {
+          ...process.env,
+          SCALPEL_ROOTS: root
+        },
+        stderr: "pipe"
+      });
+      transports.push(transport);
+
+      const client = new Client({
+        name: "scalpel-test-client",
+        version: "0.1.0"
+      });
+      clients.push(client);
+
+      await client.connect(transport);
+
+      // The parent "directory" is a regular file, so creating it throws EEXIST.
+      const createResult = await client.callTool({
+        name: "create",
+        arguments: {
+          path: "blocker.txt/child.txt",
+          content: "child\n"
+        }
+      });
+
+      expect(createResult.isError).toBe(true);
+      expect(JSON.stringify(createResult.content)).toContain("[IO_ERROR]");
+      expect(createResult.structuredContent).toMatchObject({
+        error: {
+          code: "IO_ERROR",
+          details: { cause_code: "EEXIST" }
+        }
+      });
+    });
+  }, 15000);
+
+  test("startup recovery reconciles records inside the roots and ignores records pointing outside", async () => {
+    await withTempDir(async (root) => {
+      await withTempDir(async (outside) => {
+        const transactionDir = join(root, ".scalpel-transactions");
+        await mkdir(transactionDir);
+        const record = (id: string, targetPath: string, tempPath: string): string =>
+          JSON.stringify({
+            version: 1,
+            kind: "text_write",
+            id,
+            targetPath,
+            tempPath,
+            afterSha256: "0".repeat(64),
+            afterSizeBytes: 1,
+            state: "temp_written",
+            updatedAt: new Date().toISOString()
+          });
+        // An interrupted write of our own...
+        await writeFile(join(root, "target.txt"), "before\n", "utf8");
+        await writeFile(join(root, ".scalpel-leftover.tmp"), "after\n", "utf8");
+        await writeFile(
+          join(transactionDir, "own.json"),
+          record("own", join(root, "target.txt"), join(root, ".scalpel-leftover.tmp")),
+          "utf8"
+        );
+        // ...and a record the workspace shipped that names a temp file elsewhere.
+        await writeFile(join(outside, ".scalpel-in-flight.tmp"), "in flight\n", "utf8");
+        await writeFile(
+          join(transactionDir, "shipped.json"),
+          record("shipped", join(outside, "target.txt"), join(outside, ".scalpel-in-flight.tmp")),
+          "utf8"
+        );
+
+        const transport = new StdioClientTransport({
+          command: "node",
+          args: ["--import", "tsx", "src/index.ts"],
+          cwd: process.cwd(),
+          env: {
+            ...process.env,
+            SCALPEL_ROOTS: root
+          },
+          stderr: "pipe"
+        });
+        transports.push(transport);
+
+        const client = new Client({
+          name: "scalpel-test-client",
+          version: "0.1.0"
+        });
+        clients.push(client);
+
+        // Recovery runs before the server accepts the connection.
+        await client.connect(transport);
+
+        await expect(readdir(root)).resolves.not.toContain(".scalpel-leftover.tmp");
+        await expect(readFile(join(root, "target.txt"), "utf8")).resolves.toBe("before\n");
+        await expect(readFile(join(outside, ".scalpel-in-flight.tmp"), "utf8")).resolves.toBe("in flight\n");
+        await expect(readdir(transactionDir)).resolves.toEqual(["shipped.json"]);
       });
     });
   }, 15000);

@@ -2,6 +2,36 @@
 
 All notable changes to Scalpel are documented here.
 
+## [Unreleased]
+
+### Security
+
+- Startup recovery no longer trusts records in the in-workspace transaction directory: it only deletes `.scalpel-*.tmp` files beside the record's target (a crafted record could delete any file before) and does not scan a symlinked or junctioned transaction directory (which could move or delete unrelated `*.json` files). Records that name paths outside the configured roots, directly or through a link, are left untouched, and records are never quarantined through a linked `quarantine` directory.
+- `grep` no longer follows symlinks or junctions out of the configured roots; links are reported in `skipped_files` with reason `symlink` (a configured root that is itself a link is still searched).
+- The operation journal is never appended through a symlink.
+- On POSIX, editing an owner-only file (for example a `0600` secret) made its new content readable by other users, because the replacement was written with the default mode (usually `0644`). The replacement is now created `0600` and gets the file's own mode only once its content is complete.
+- Writes and moves now re-resolve their directories when they commit and recheck the target's and parent's identity right before the rename: a directory created as, or swapped for, a junction after validation could make `create` and `move` write outside the roots (or pull an outside file in) while reporting success.
+- `@modelcontextprotocol/sdk` 1.32.1 and patched transitive dependencies (`pnpm audit` was reporting 32 advisories, all through the SDK).
+
+### Fixed
+
+- Streaming `patch` on oversized files could split a UTF-16 surrogate pair across output chunks and write astral characters (emoji, ...) as two U+FFFD while reporting success.
+- An edit another process made while Scalpel was writing a replacement (seconds on the streaming paths, or during Windows rename retries) was silently overwritten; it now fails with `CONCURRENCY_CONFLICT`.
+- Names that merely start with two dots (`..cache`, `..notes.txt`) were rejected as outside the root.
+- A UTF-8 BOM was dropped by streaming `patch` and `delete_range` of line 1, and pushed mid-file by `prepend` and `insert` at line 1; ranged reads and `read_chunk` stripped it while full reads kept it; `grep` could not anchor `^` on line 1.
+- `insert` after a final line without a newline glued the text onto that line.
+- Every edit replaced the file's mode (scripts lost the executable bit); modes are now kept on POSIX, and read-only files fail with `PERMISSION_DENIED` instead of being replaced.
+- On Windows, edits and moves failed with a raw `EPERM` whenever antivirus, the indexer, a sync client or an editor briefly held the file; the rename is now retried (`SCALPEL_RENAME_RETRY_MS`, default 5000).
+- `list_dir` failed for any directory containing a binary or non-UTF-8 file and read every file in full; `stat` and `move` failed on small binary files.
+- Ranged `read` ignored `maxReadBytes`, reported `lines: 0` for a range past the end, and took quadratic time on long lines.
+- Unexpected exceptions (EACCES, EEXIST, ENOSPC, ...) reached MCP clients without a Scalpel error code; they now map to `PERMISSION_DENIED`, `FILE_NOT_FOUND`, `INVALID_INPUT`, or the new `IO_ERROR`/`INTERNAL_ERROR` codes with `details.cause_code`.
+- Path locks did not serialize paths differing only by case on Windows/macOS, and a lock released mid-check threw an unstructured error.
+- Failed writes and moves left transaction records behind (with `overwrite`, a failed move was later quarantined as unrecoverable); moving a directory into itself created stray directories; `read_chunk` threw for missing paths; `diff` ignored `allowHiddenPaths` and miscounted `+`/`-` content lines.
+
+### Added
+
+- Property-based tests (fast-check) for the streaming replace, ranged reads, `insert`, and `delete_range`.
+
 ## [1.0.0] - 2026-07-03
 
 ### Added

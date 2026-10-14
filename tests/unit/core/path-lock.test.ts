@@ -34,6 +34,35 @@ describe("withPathLock", () => {
     expect(events).toEqual(["left:start", "left:end", "right:start", "right:end"]);
   });
 
+  test.runIf(process.platform === "win32" || process.platform === "darwin")(
+    "serializes paths that differ only by case on case-insensitive platforms",
+    async () => {
+      const events: string[] = [];
+      let upperStarted!: () => void;
+      const upperStartedPromise = new Promise<void>((resolve) => {
+        upperStarted = resolve;
+      });
+
+      const upper = withPathLock(["C:\\Repo\\Notes.txt"], async () => {
+        events.push("upper:start");
+        upperStarted();
+        await delay(20);
+        events.push("upper:end");
+      });
+      await upperStartedPromise;
+
+      const lower = withPathLock(["c:\\repo\\notes.txt"], async () => {
+        events.push("lower:start");
+        await delay(1);
+        events.push("lower:end");
+      });
+
+      await Promise.all([upper, lower]);
+
+      expect(events).toEqual(["upper:start", "upper:end", "lower:start", "lower:end"]);
+    },
+  );
+
   test("does not block unrelated paths", async () => {
     const events: string[] = [];
 

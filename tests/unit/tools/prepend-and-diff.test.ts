@@ -50,4 +50,29 @@ describe("prependTool and diffTool", () => {
       }
     });
   });
+
+  test("diff counts changed lines that start with + or - themselves", async () => {
+    await withTempDir(async (root) => {
+      await writeFile(join(root, "notes.md"), "-- old note\nkeep\n", "utf8");
+
+      const config = createConfig({ roots: [root] });
+      const result = await diffTool(
+        { path: "notes.md", proposed_content: "keep\n++counter\n" },
+        config
+      );
+
+      expect(result).toMatchObject({ ok: true, data: { lines_added: 1, lines_removed: 1 } });
+    });
+  });
+
+  test("diff honours allowHiddenPaths like the other tools", async () => {
+    await withTempDir(async (root) => {
+      await writeFile(join(root, ".env"), "SECRET=1\n", "utf8");
+
+      const config = createConfig({ roots: [root], allowHiddenPaths: false });
+      const result = await diffTool({ path: ".env", proposed_content: "" }, config);
+
+      expect(result).toMatchObject({ ok: false, error: { code: "HIDDEN_PATH_NOT_ALLOWED" } });
+    });
+  });
 });

@@ -3,6 +3,7 @@ import { join, resolve } from "node:path";
 
 import { describe, expect, test } from "vitest";
 
+import { skipWithoutFileSymlinks } from "../../helpers/symlinks.js";
 import { withTempDir } from "../../helpers/temp.js";
 import { resolveWorkspacePath } from "../../../src/core/path-policy.js";
 
@@ -26,6 +27,35 @@ describe("resolveWorkspacePath", () => {
     });
   });
 
+  test("accepts names that merely start with two dots", async () => {
+    await withTempDir(async (root) => {
+      await writeFile(join(root, "..notes.txt"), "hello\n", "utf8");
+      await mkdir(join(root, "..cache"), { recursive: true });
+
+      for (const path of ["..notes.txt", "..cache/entry.json", join(root, "..notes.txt")]) {
+        const result = await resolveWorkspacePath({ path, roots: [root], operation: "read" });
+        expect(result.ok, path).toBe(true);
+      }
+    });
+  });
+
+  test("treats a backslash as a separator only on Windows", async () => {
+    await withTempDir(async (root) => {
+      const result = await resolveWorkspacePath({
+        path: "..\\outside.txt",
+        roots: [root],
+        operation: "read"
+      });
+
+      if (process.platform === "win32") {
+        expect(result).toMatchObject({ ok: false, error: { code: "PATH_OUTSIDE_ROOT" } });
+      } else {
+        // An ordinary (if odd) file name directly inside the root.
+        expect(result).toMatchObject({ ok: true, data: join(root, "..\\outside.txt") });
+      }
+    });
+  });
+
   test("rejects a path that escapes the configured root", async () => {
     await withTempDir(async (root) => {
       const result = await resolveWorkspacePath({
@@ -42,7 +72,7 @@ describe("resolveWorkspacePath", () => {
     });
   });
 
-  test("rejects symlink targets inside the workspace", async () => {
+  test.skipIf(skipWithoutFileSymlinks)("rejects symlink targets inside the workspace", async () => {
     await withTempDir(async (root) => {
       const target = join(root, "real.txt");
       const link = join(root, "linked.txt");

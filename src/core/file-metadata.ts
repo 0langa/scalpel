@@ -92,18 +92,60 @@ export async function readFileSnapshot(
 export async function readLineRangeSnapshot(
   path: string,
   startLine: number,
-  endLine: number
+  endLine: number,
+  // highWaterMark is the read chunk size; only tests lower it.
+  options: { maxContentBytes?: number | undefined; highWaterMark?: number | undefined } = {}
 ): Promise<DomainResult<LineRangeSnapshot>> {
   try {
     const stats = await stat(path);
     const hash = createHash("sha256");
-    const decoder = new TextDecoder("utf-8", { fatal: true });
-    let pending = "";
-    let content = "";
-    let lineCount = 0;
-    let eol: LineEnding = "none";
+    const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+    const maxContentBytes = options.maxContentBytes ?? Number.POSITIVE_INFINITY;
+    const parts: string[] = [];
+    const scan = {
+      contentBytes: 0,
+      lineCount: 0,
+      inUnterminatedLine: false,
+      previousEndedWithCr: false,
+      eol: "none" as LineEnding,
+    };
 
-    for await (const chunk of createReadStream(path)) {
+    // Scans only newly decoded text (no re-scanning of a growing remainder, which
+    // was quadratic for long lines) and keeps only the requested lines.
+    const consume = (decoded: string): boolean => {
+      let cursor = 0;
+      while (cursor < decoded.length) {
+        const newline = decoded.indexOf("\n", cursor);
+        const end = newline === -1 ? decoded.length : newline + 1;
+        const currentLine = scan.lineCount + 1;
+        if (currentLine >= startLine && currentLine <= endLine) {
+          const piece = decoded.slice(cursor, end);
+          scan.contentBytes += Buffer.byteLength(piece, "utf8");
+          if (scan.contentBytes > maxContentBytes) {
+            return false;
+          }
+          parts.push(piece);
+        }
+
+        if (newline === -1) {
+          scan.inUnterminatedLine = true;
+        } else {
+          const crlf = newline > 0 ? decoded[newline - 1] === "\r" : scan.previousEndedWithCr;
+          scan.eol = mergeLineEnding(scan.eol, crlf ? "\r\n" : "\n");
+          scan.lineCount += 1;
+          scan.inUnterminatedLine = false;
+        }
+        cursor = end;
+      }
+      if (decoded.length > 0) {
+        scan.previousEndedWithCr = decoded.endsWith("\r");
+      }
+      return true;
+    };
+
+    const streamOptions =
+      options.highWaterMark === undefined ? {} : { highWaterMark: options.highWaterMark };
+    for await (const chunk of createReadStream(path, streamOptions)) {
       const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
       if (buffer.includes(0)) {
         return failure("BINARY_FILE_NOT_SUPPORTED", "Binary files are not supported by text tools", path);
@@ -118,40 +160,32 @@ export async function readLineRangeSnapshot(
         return failure("UNSUPPORTED_ENCODING", "File is not valid UTF-8", path);
       }
 
-      pending += decoded;
-      const completeLines = pending.match(/[^\n]*\n/g) ?? [];
-      pending = pending.slice(completeLines.join("").length);
-
-      for (const line of completeLines) {
-        lineCount += 1;
-        eol = mergeLineEnding(eol, line.endsWith("\r\n") ? "\r\n" : "\n");
-        if (lineCount >= startLine && lineCount <= endLine) {
-          content += line;
-        }
+      if (!consume(decoded)) {
+        return rangeTooLarge(path, startLine, endLine, maxContentBytes);
       }
     }
 
+    let tail: string;
     try {
-      const tail = decoder.decode();
-      pending += tail;
+      tail = decoder.decode();
     } catch {
       return failure("UNSUPPORTED_ENCODING", "File is not valid UTF-8", path);
     }
+    if (!consume(tail)) {
+      return rangeTooLarge(path, startLine, endLine, maxContentBytes);
+    }
 
-    if (pending.length > 0) {
-      lineCount += 1;
-      if (lineCount >= startLine && lineCount <= endLine) {
-        content += pending;
-      }
+    if (scan.inUnterminatedLine) {
+      scan.lineCount += 1;
     }
 
     return success({
       absolutePath: path,
-      content,
+      content: parts.join(""),
       encoding: "utf8",
-      eol,
+      eol: scan.eol,
       sizeBytes: stats.size,
-      lineCount,
+      lineCount: scan.lineCount,
       sha256: hash.digest("hex"),
       mtimeMs: stats.mtimeMs,
       textKind: "utf8",
@@ -217,19 +251,19 @@ export async function readPathStat(
       return metadata;
     }
 
-    const snapshot = await readFileSnapshot(path, options);
-    if (!snapshot.ok) {
-      return snapshot;
-    }
+    // Small files are classified rather than rejected: stat and move must work
+    // on binary and non-UTF-8 files too, not just on text.
+    const buffer = await readFile(path);
+    const textKind = classifyBuffer(buffer);
 
     return success({
       absolutePath: path,
       isDirectory: false,
-      sizeBytes: snapshot.data.sizeBytes,
-      lineCount: snapshot.data.lineCount,
-      sha256: snapshot.data.sha256,
-      mtimeMs: snapshot.data.mtimeMs,
-      textKind: snapshot.data.textKind
+      sizeBytes: buffer.byteLength,
+      lineCount: textKind === "utf8" ? countLines(buffer.toString("utf8")) : 0,
+      sha256: createHash("sha256").update(buffer).digest("hex"),
+      mtimeMs: stats.mtimeMs,
+      textKind
     });
   } catch (error) {
     return failure(
@@ -248,7 +282,7 @@ export async function readTextMetadata(path: string): Promise<DomainResult<TextM
   try {
     const stats = await stat(path);
     const hash = createHash("sha256");
-    const decoder = new TextDecoder("utf-8", { fatal: true });
+    const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
     let lineCount = 0;
     let sawContent = false;
     let lastCharacter = "";
@@ -331,6 +365,20 @@ export async function classifyFile(path: string, sampleBytes = 8192): Promise<Do
       path
     );
   }
+}
+
+function rangeTooLarge(
+  path: string,
+  startLine: number,
+  endLine: number,
+  maxBytes: number
+): DomainResult<never> {
+  return failure("FILE_TOO_LARGE", "Requested line range exceeds configured text read limit", path, {
+    start_line: startLine,
+    end_line: endLine,
+    max_bytes: maxBytes,
+    suggested_tool: "read_chunk"
+  });
 }
 
 export function fileTooLarge(

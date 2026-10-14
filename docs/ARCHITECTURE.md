@@ -209,18 +209,11 @@ Regression tests now cover:
 
 The durable repo smoke path is `pnpm test:mcp-smoke`, which starts the built stdio server and writes JSON/Markdown reports under `tmp/mcp-smoke/<timestamp>`.
 
-Kimi Code remains a useful external-client smoke path:
-
-- project-local MCP config in `.kimi-code/mcp.json`
-- reusable validation prompt in `docs/KIMI_TEST_PROMPT.md`
-- canonical human-readable test report in `tmp/scalpel-mcp-test-report.md`
-
 ## Near-Term Priorities
 
 The current implementation is production-usable for local testing, but these are still the most likely follow-up areas:
 
 - expand persistence proof across supported platforms and filesystems
-- expand Kimi regression coverage as new edge cases are found
 - expand smoke coverage as new edge cases are found
 - extend streaming edit paths to `batch_edit`, `insert`, `delete_range`, and
   `replace_between_markers`, which still require full-file snapshots

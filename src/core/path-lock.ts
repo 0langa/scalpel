@@ -28,7 +28,16 @@ type LockOwner = {
 };
 
 export async function withPathLock<T>(paths: string[], callback: () => Promise<T>): Promise<T> {
-  const keys = [...new Set(paths)].sort((left, right) => left.localeCompare(right));
+  const pathsByKey = new Map<string, string>();
+  for (const path of paths) {
+    const key = lockKeyFor(path);
+    if (!pathsByKey.has(key)) {
+      pathsByKey.set(key, path);
+    }
+  }
+  // Plain code-unit order: localeCompare() depends on the process locale, and
+  // cooperating processes must agree on the order to avoid lock-order deadlocks.
+  const keys = [...pathsByKey.keys()].sort((left, right) => (left < right ? -1 : left > right ? 1 : 0));
   const acquired: AcquiredLock[] = [];
   const fileLocks: FileLock[] = [];
 
@@ -50,7 +59,7 @@ export async function withPathLock<T>(paths: string[], callback: () => Promise<T
         fileLocks.push(await acquireFileLock(key));
       } catch (error) {
         if (error instanceof PathLockTimeoutError) {
-          return failure("LOCK_TIMEOUT", error.message, key) as T;
+          return failure("LOCK_TIMEOUT", error.message, pathsByKey.get(key) ?? key) as T;
         }
         throw error;
       }
@@ -69,6 +78,20 @@ export async function withPathLock<T>(paths: string[], callback: () => Promise<T
   }
 }
 
+// Windows and macOS filesystems are case-insensitive by default, so
+// `C:\repo\File.txt` and `c:\repo\file.txt` are the same file and must share
+// one lock. Folding case on a case-sensitive volume only over-serializes.
+function lockKeyFor(path: string): string {
+  return process.platform === "win32" || process.platform === "darwin" ? path.toLowerCase() : path;
+}
+
+// Name (without `.lock`) of the cross-process lock directory for `path`. Every
+// cooperating process must derive it the same way; the hardening suite uses it
+// to plant locks that a running server has to honour.
+export function lockKeyHash(path: string): string {
+  return hashKey(lockKeyFor(path));
+}
+
 async function acquireFileLock(key: string): Promise<FileLock> {
   const root = lockRoot();
   await mkdir(root, { recursive: true });
@@ -79,16 +102,22 @@ async function acquireFileLock(key: string): Promise<FileLock> {
   for (;;) {
     try {
       await mkdir(lockPath);
-      await writeFile(
-        join(lockPath, "owner.json"),
-        `${JSON.stringify({
-          pid: process.pid,
-          token: randomUUID(),
-          key_hash: hashKey(key),
-          acquired_at: new Date().toISOString(),
-        })}\n`,
-        "utf8",
-      );
+      try {
+        await writeFile(
+          join(lockPath, "owner.json"),
+          `${JSON.stringify({
+            pid: process.pid,
+            token: randomUUID(),
+            key_hash: hashKey(key),
+            acquired_at: new Date().toISOString(),
+          })}\n`,
+          "utf8",
+        );
+      } catch (error) {
+        // Do not leave an ownerless lock behind for other processes to wait on.
+        await rm(lockPath, { recursive: true, force: true });
+        throw error;
+      }
       return {
         path: lockPath,
         release: async () => {
@@ -119,7 +148,16 @@ async function recoverStaleFileLock(lockPath: string): Promise<boolean> {
     return false;
   }
 
-  const owner = await readLockOwner(lockPath);
+  let owner: Awaited<ReturnType<typeof readLockOwner>>;
+  try {
+    owner = await readLockOwner(lockPath);
+  } catch (error) {
+    if (isNodeErrorWithCode(error, "ENOENT")) {
+      // The holder released the lock between our mkdir() and this check.
+      return true;
+    }
+    throw error;
+  }
   const ageMs = Date.now() - owner.acquiredAtMs;
   if (ageMs < staleMs) {
     return false;
@@ -180,8 +218,9 @@ function isProcessAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
-  } catch {
-    return false;
+  } catch (error) {
+    // EPERM: the process exists but belongs to someone we may not signal.
+    return isNodeErrorWithCode(error, "EPERM");
   }
 }
 

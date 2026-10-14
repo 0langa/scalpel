@@ -8,6 +8,7 @@ import { resolveWorkspacePath } from "../core/path-policy.js";
 import {
   findLineMarkerIndex,
   normalizeLineInsertion,
+  splitBom,
   splitLinesWithEndings,
 } from "../core/text.js";
 
@@ -62,7 +63,8 @@ export async function insertTool(
       return snapshot;
     }
 
-    const lines = splitLinesWithEndings(snapshot.data.content);
+    const { bom, body } = splitBom(snapshot.data.content);
+    const lines = splitLinesWithEndings(body);
     let insertIndex: number;
 
     if (input.line !== undefined) {
@@ -90,11 +92,14 @@ export async function insertTool(
 
     const eol = snapshot.data.eol === "\r\n" ? "\r\n" : "\n";
     const insertionLines = normalizeLineInsertion(input.content, eol);
-    const nextContent = [
-      ...lines.slice(0, insertIndex),
-      ...insertionLines,
-      ...lines.slice(insertIndex),
-    ].join("");
+    const before = lines.slice(0, insertIndex);
+    const lastBefore = before.at(-1);
+    if (insertionLines.length > 0 && lastBefore !== undefined && !lastBefore.endsWith("\n")) {
+      // Inserting after a final line that has no line ending: terminate it
+      // first, otherwise the inserted text would be glued onto that line.
+      before[before.length - 1] = `${lastBefore}${eol}`;
+    }
+    const nextContent = bom + [...before, ...insertionLines, ...lines.slice(insertIndex)].join("");
     const diff = createUnifiedDiff(resolved.data, snapshot.data.content, nextContent);
 
     if (input.dry_run === true) {
@@ -122,6 +127,7 @@ export async function insertTool(
       maxReadBytes: config.maxReadBytes,
       durability: config.durability,
       transactionDir: config.transactionDir,
+      roots: config.roots,
     });
     if (!writeResult.ok) {
       return writeResult;

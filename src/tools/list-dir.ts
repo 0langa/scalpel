@@ -1,8 +1,8 @@
-import { readdir } from "node:fs/promises";
+import type { Stats } from "node:fs";
+import { lstat, readdir } from "node:fs/promises";
 import { join } from "node:path";
 
 import { type ScalpelConfig } from "../core/config.js";
-import { readPathStat } from "../core/file-metadata.js";
 import { failure, success, type DomainResult } from "../core/errors.js";
 import { resolveWorkspacePath, toRelativeDisplayPath } from "../core/path-policy.js";
 
@@ -11,6 +11,7 @@ type ListDirEntry = {
   path: string;
   relativePath: string;
   isDirectory: boolean;
+  isSymlink: boolean;
   sizeBytes: number;
 };
 
@@ -34,38 +35,53 @@ export async function listDirTool(
     return resolved;
   }
 
+  let children: string[];
   try {
-    const children = await readdir(resolved.data);
-    const ordered = [...children].sort((left, right) => left.localeCompare(right));
-    const entries: ListDirEntry[] = [];
-    const displayRoot = config.roots[0] ?? resolved.data;
-
-    for (const child of ordered) {
-      const childPath = join(resolved.data, child);
-      const stats = await readPathStat(childPath);
-
-      if (!stats.ok) {
-        return stats;
-      }
-
-      entries.push({
-        name: child,
-        path: childPath,
-        relativePath: toRelativeDisplayPath(displayRoot, childPath),
-        isDirectory: stats.data.isDirectory,
-        sizeBytes: stats.data.sizeBytes
-      });
-    }
-
-    return success({
-      absolutePath: resolved.data,
-      entries
-    });
+    children = await readdir(resolved.data);
   } catch (error) {
     return failure(
-      "FILE_NOT_FOUND",
+      isNodeErrorWithCode(error, "ENOTDIR") ? "INVALID_INPUT" : "FILE_NOT_FOUND",
       error instanceof Error ? error.message : `Unable to list directory ${resolved.data}`,
       resolved.data
     );
   }
+
+  const ordered = [...children].sort((left, right) => left.localeCompare(right));
+  const entries: ListDirEntry[] = [];
+  const displayRoot = config.roots[0] ?? resolved.data;
+
+  for (const child of ordered) {
+    if (!config.allowHiddenPaths && child.startsWith(".")) {
+      continue;
+    }
+
+    // lstat only: listing must not read file contents (binary or huge files
+    // used to fail the whole listing) and must not follow links out of the root.
+    const childPath = join(resolved.data, child);
+    let stats: Stats;
+    try {
+      stats = await lstat(childPath);
+    } catch {
+      // The entry vanished between readdir and lstat.
+      continue;
+    }
+
+    entries.push({
+      name: child,
+      path: childPath,
+      relativePath: toRelativeDisplayPath(displayRoot, childPath),
+      isDirectory: stats.isDirectory(),
+      isSymlink: stats.isSymbolicLink(),
+      sizeBytes: stats.size
+    });
+  }
+
+  return success({
+    absolutePath: resolved.data,
+    entries
+  });
+}
+
+function isNodeErrorWithCode(error: unknown, code: string): boolean {
+  return typeof error === "object" && error !== null && "code" in error && error.code === code;
 }

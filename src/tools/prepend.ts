@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { mkdir } from "node:fs/promises";
+import { mkdir, open } from "node:fs/promises";
 import { dirname } from "node:path";
 
 import { type ScalpelConfig } from "../core/config.js";
@@ -17,7 +17,9 @@ import { failure, success, type DomainResult } from "../core/errors.js";
 import { withPathLock } from "../core/path-lock.js";
 import { resolveWorkspacePath } from "../core/path-policy.js";
 import { countLines } from "../core/line-endings.js";
-import { countInsertedLines } from "../core/text.js";
+import { countInsertedLines, splitBom, UTF8_BOM } from "../core/text.js";
+
+const UTF8_BOM_BYTES = Buffer.from(UTF8_BOM, "utf8");
 
 type PrependInput = {
   path: string;
@@ -65,7 +67,8 @@ export async function prependTool(
     }
 
     const existing = before.data?.content ?? "";
-    const nextContent = `${input.content}${existing}`;
+    const { bom, body } = splitBom(existing);
+    const nextContent = `${bom}${bom === "" ? input.content : splitBom(input.content).body}${body}`;
     const diff = createUnifiedDiff(resolved.data, existing, nextContent);
     const result = {
       absolutePath: resolved.data,
@@ -98,6 +101,7 @@ export async function prependTool(
       maxReadBytes: config.maxReadBytes,
       durability: config.durability,
       transactionDir: config.transactionDir,
+      roots: config.roots,
     });
     if (!writeResult.ok) {
       return writeResult;
@@ -158,17 +162,22 @@ async function prependLargeExistingFile(
     return failure("UNSUPPORTED_ENCODING", "File text metadata could not be computed", path);
   }
 
-  const afterSizeBytes = Buffer.byteLength(input.content, "utf8") + before.data.sizeBytes;
-  const afterSha256 = await hashContentThenFile(input.content, path);
+  // Keep an existing BOM at offset 0: emit it, then the new content, then the
+  // rest of the file after the BOM bytes.
+  const skipBytes = (await startsWithUtf8Bom(path)) ? UTF8_BOM_BYTES.length : 0;
+  const prefix = skipBytes === 0 ? input.content : `${UTF8_BOM}${splitBom(input.content).body}`;
+  const afterSizeBytes = Buffer.byteLength(prefix, "utf8") + before.data.sizeBytes - skipBytes;
+  const afterSha256 = await hashChunks(prependChunks(prefix, path, skipBytes));
   const writeResult = await writeTextFileStreamForMutation({
     path,
-    chunks: prependChunks(input.content, path),
+    chunks: prependChunks(prefix, path, skipBytes),
     before: before.data,
     afterSha256,
     afterSizeBytes,
     maxReadBytes: config.maxReadBytes,
     durability: config.durability,
     transactionDir: config.transactionDir,
+    roots: config.roots,
   });
   if (!writeResult.ok) {
     return writeResult;
@@ -200,18 +209,32 @@ async function prependLargeExistingFile(
   });
 }
 
-async function hashContentThenFile(content: string, path: string): Promise<string> {
+async function hashChunks(chunks: AsyncIterable<string | Buffer>): Promise<string> {
   const hash = createHash("sha256");
-  hash.update(content);
-  for await (const chunk of createReadStream(path)) {
-    hash.update(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  for await (const chunk of chunks) {
+    hash.update(chunk);
   }
   return hash.digest("hex");
 }
 
-async function* prependChunks(content: string, path: string): AsyncIterable<string | Buffer> {
+async function* prependChunks(
+  content: string,
+  path: string,
+  skipBytes: number,
+): AsyncIterable<string | Buffer> {
   yield content;
-  for await (const chunk of createReadStream(path)) {
+  for await (const chunk of createReadStream(path, { start: skipBytes })) {
     yield Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+  }
+}
+
+async function startsWithUtf8Bom(path: string): Promise<boolean> {
+  const handle = await open(path, "r");
+  try {
+    const buffer = Buffer.alloc(UTF8_BOM_BYTES.length);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    return bytesRead === buffer.length && buffer.equals(UTF8_BOM_BYTES);
+  } finally {
+    await handle.close();
   }
 }

@@ -117,6 +117,18 @@ Guaranteed today:
 - no relative escape outside configured roots
 - no absolute path use outside configured roots
 - no traversal through existing symlink path segments
+- recursive and listing tools (`grep`, `list_dir`) do not follow symlinks or
+  junctions they encounter; they report them instead
+- writes and moves re-resolve their directories (`realpath`) when they commit
+  and refuse with `SYMLINK_NOT_ALLOWED` if a directory created or swapped in by
+  another process after validation now leads outside the roots
+- workspace content cannot steer Scalpel outside the roots at startup:
+  recovery leaves untouched any record that names a path outside the
+  configured roots, as written or once symlinks or junctions in its directories
+  are resolved (paths written outside the roots are not even stat()ed); it only
+  deletes `.scalpel-*.tmp` files beside a record's target, does not scan a
+  symlinked transaction directory, and never moves a record into a symlinked
+  quarantine directory; the journal is never appended through a symlink
 
 ### Hidden Paths
 
@@ -181,6 +193,17 @@ When enabled with `SCALPEL_JOURNAL_ENABLED`, mutating tools append JSONL records
 
 This gives best-effort local filesystem replacement atomicity.
 
+Because the rename only needs write access to the directory, Scalpel checks the
+target's own write permission first and refuses read-only files with
+`PERMISSION_DENIED`. On POSIX the temp file of a replacement is created
+owner-only (`0600`) and gets the replaced file's permission bits once its
+content is written, before the rename, so the new content is never readable by
+more users than the file it replaces. On Windows, a rename that fails because
+another process holds the target open without delete sharing (antivirus,
+indexers, sync clients, editors) is retried with a short backoff for up to
+`SCALPEL_RENAME_RETRY_MS` (default 5000 ms); the target is untouched until a
+rename succeeds.
+
 When `SCALPEL_DURABILITY=strict` is set, content writes also flush the temp file before rename and attempt to flush the parent directory after rename. Parent-directory flush support is platform-dependent, especially on Windows. Unsupported parent flushes are reported as non-fatal warnings.
 
 Text writes and `move` also create metadata-only transaction records under
@@ -199,6 +222,10 @@ Not guaranteed today:
 - cross-platform persistence guarantees for every filesystem and power-loss scenario
 - guaranteed parent-directory `fsync` on every platform
 - protection against malicious same-user changes after success is reported
+- preserving what belongs to the old file rather than its content: a replaced
+  file is a new file, so hard links to it are detached, and Windows attributes
+  other than read-only (hidden, system), explicit ACLs, owner/group on POSIX,
+  and NTFS alternate data streams are not carried over
 
 `move` detects a cross-device or cross-filesystem rename via the OS `EXDEV`
 error and rejects it with `CROSS_DEVICE_MOVE_NOT_SUPPORTED` before any partial
@@ -231,7 +258,7 @@ machine-readable evidence:
 | Full-file memory loading | Most full-text mutators still require whole-file UTF-8 snapshots under `maxReadBytes`; `append` and `prepend` have oversized UTF-8 streaming paths, and `read_chunk` plus ranged `read` are bounded read paths | Large edit workloads still need broader streaming edit design |
 | Failure payload compatibility | Failure keeps text plus `structuredContent.error` | Older clients still parse text; newer agents can use structured errors |
 | Durability | Default mode uses rename without explicit `fsync`; strict mode flushes file content and attempts parent directory flush | Power loss can leave uncertain persistence, especially where directory flush is unsupported |
-| Race windows | Path validation and write are separate steps | Files can change between validation and operation |
+| Race windows | Path validation and write are separate steps; content is revalidated before the temp file is written and the target's identity (device, inode, size, mtime) again immediately before the rename | A change between that last check and the rename itself, or one that preserves identity, can still be overwritten |
 | Binary files | Text tools detect and reject binary/non-UTF-8 files; binary editing is unsupported | Prevents corruption but does not provide byte-edit workflows |
 | Search traversal | Sequential recursive traversal | Slow for large trees |
 | Native acceleration | None | Future performance targets require new layer |

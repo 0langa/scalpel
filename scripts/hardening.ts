@@ -1,13 +1,13 @@
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, open, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
 import { arch, platform, release, version as osVersion } from "node:os";
-import { join, resolve } from "node:path";
+import { join, resolve, sep } from "node:path";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
+import { lockKeyHash } from "../src/core/path-lock.js";
 import { beginMoveTransaction, beginWriteTransaction } from "../src/core/write-transaction.js";
 
 type Command = "setup" | "corpus" | "race" | "crash" | "all";
@@ -231,6 +231,10 @@ async function main(): Promise<void> {
   await writeReport(report);
   const requiredFailures = checks.filter((check) => check.severity === "required" && !check.passed);
   if (requiredFailures.length > 0) {
+    // Name the failures in the log too: CI only keeps the report as an artifact.
+    for (const check of requiredFailures) {
+      console.error(`FAILED: ${check.name}${check.detail === undefined ? "" : ` - ${check.detail}`}`);
+    }
     throw new Error(
       `Hardening suite failed ${String(requiredFailures.length)} required checks. Report: ${join(reportDir, "report.md")}`,
     );
@@ -360,7 +364,9 @@ async function runCorpusSuite(corpusReports: Report["corpora"]): Promise<void> {
       await timedCheck(`${corpus.name}: path escape rejected`, "required", async () => {
         const result = await client.callTool({
           name: "read",
-          arguments: { path: "..\\outside.txt" },
+          // A backslash only separates path segments on Windows; on POSIX
+          // "..\outside.txt" is an ordinary file name inside the root.
+          arguments: { path: `..${sep}outside.txt` },
         });
         assert(result.isError === true, "path escape unexpectedly succeeded");
         assert(
@@ -2090,13 +2096,13 @@ function createScalpelTransport(
 
 async function createStalePathLock(lockDir: string, absolutePath: string): Promise<void> {
   await mkdir(lockDir, { recursive: true });
-  const lockPath = join(lockDir, `${hashKey(absolutePath)}.lock`);
+  const lockPath = join(lockDir, `${lockKeyHash(absolutePath)}.lock`);
   await mkdir(lockPath, { recursive: true });
   await writeFile(
     join(lockPath, "owner.json"),
     `${JSON.stringify({
       pid: 999_999_999,
-      key_hash: hashKey(absolutePath),
+      key_hash: lockKeyHash(absolutePath),
       acquired_at: "2000-01-01T00:00:00.000Z",
     })}\n`,
     "utf8",
@@ -2105,13 +2111,13 @@ async function createStalePathLock(lockDir: string, absolutePath: string): Promi
 
 async function createLivePathLock(lockDir: string, absolutePath: string): Promise<void> {
   await mkdir(lockDir, { recursive: true });
-  const lockPath = join(lockDir, `${hashKey(absolutePath)}.lock`);
+  const lockPath = join(lockDir, `${lockKeyHash(absolutePath)}.lock`);
   await mkdir(lockPath, { recursive: true });
   await writeFile(
     join(lockPath, "owner.json"),
     `${JSON.stringify({
       pid: process.pid,
-      key_hash: hashKey(absolutePath),
+      key_hash: lockKeyHash(absolutePath),
       acquired_at: new Date().toISOString(),
     })}\n`,
     "utf8",
@@ -2442,10 +2448,6 @@ function rootsFromStructuredContent(structuredContent: unknown): string[] {
     return structuredContent.roots;
   }
   throw new Error("config response did not include roots");
-}
-
-function hashKey(key: string): string {
-  return createHash("sha256").update(key).digest("hex");
 }
 
 function sanitizeName(value: string): string {

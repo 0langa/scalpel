@@ -1,18 +1,20 @@
-import { mkdir, rename, stat } from "node:fs/promises";
-import { dirname } from "node:path";
+import { lstat, mkdir, stat } from "node:fs/promises";
+import { dirname, isAbsolute, relative, sep } from "node:path";
 
 import { type ScalpelConfig } from "../core/config.js";
-import { failure, success, type DomainResult } from "../core/errors.js";
+import { failure, success, type DomainResult, type FailureResult } from "../core/errors.js";
 import { crashIfFaultPoint } from "../core/fault-injection.js";
 import { type FileStat, readPathStat } from "../core/file-metadata.js";
 import { recordJournal, snapshotState } from "../core/journal.js";
 import {
   readPathStatForMutation,
   runHardeningInterference,
+  validateParentInsideRoots,
   validatePathIsNotSymlink,
 } from "../core/mutation.js";
 import { withPathLock } from "../core/path-lock.js";
-import { resolveWorkspacePath } from "../core/path-policy.js";
+import { isConfiguredRoot, resolveWorkspacePath } from "../core/path-policy.js";
+import { renameWithRetry } from "../core/write-file-atomic.js";
 import { beginMoveTransaction } from "../core/write-transaction.js";
 
 type MoveInput = {
@@ -73,6 +75,14 @@ export async function moveTool(
       }
 
       return sourceStat;
+    }
+
+    if (sourceStat.data.isDirectory && isStrictlyInside(source.data, destination.data)) {
+      // Fail before mkdir() would create the destination parent inside the
+      // source, and with a clear error instead of rename()'s EINVAL.
+      return failure("INVALID_INPUT", "Cannot move a directory into itself", source.data, {
+        destination: destination.data,
+      });
     }
 
     let destinationExists = false;
@@ -140,8 +150,10 @@ export async function moveTool(
     }
 
     await mkdir(dirname(destination.data), { recursive: true });
+    const parentIdentity = await directoryIdentity(dirname(destination.data), config.roots);
 
     await runHardeningInterference(source.data, "BEFORE_COMMIT");
+    await runHardeningInterference(dirname(source.data), "BEFORE_COMMIT");
     await runHardeningInterference(destination.data, "BEFORE_COMMIT");
     await runHardeningInterference(dirname(destination.data), "BEFORE_COMMIT");
 
@@ -174,7 +186,7 @@ export async function moveTool(
       return destinationGuard;
     }
 
-    const parentGuard = await revalidateParentDirectory(dirname(destination.data));
+    const parentGuard = await revalidateMoveParents(source.data, destination.data, parentIdentity, config.roots);
     if (!parentGuard.ok) {
       await recordJournal(config, {
         tool: "move",
@@ -194,9 +206,26 @@ export async function moveTool(
     });
     crashIfFaultPoint("move.after_transaction_start");
     try {
-      await rename(source.data, destination.data);
+      // Windows may retry the rename for a while; recheck what can change in
+      // the meantime before every attempt.
+      await renameWithRetry(source.data, destination.data, async () => {
+        const recheck = await revalidateMoveParents(source.data, destination.data, parentIdentity, config.roots);
+        const absent = destinationExists ? recheck : await revalidatePathIsAbsent(destination.data);
+        const failed = !recheck.ok ? recheck : absent;
+        if (!failed.ok) {
+          throw new MoveGuardError(failed);
+        }
+      });
     } catch (error) {
-      if (isNodeErrorWithCode(error, "EXDEV")) {
+      // rename() is atomic: when it fails nothing moved, so the record must not
+      // linger (with overwrite it would later be quarantined as "both exist").
+      await Promise.allSettled([transaction.complete()]);
+      if (error instanceof MoveGuardError) {
+        return error.result;
+      }
+      const causeCode = errorCode(error);
+
+      if (causeCode === "EXDEV") {
         return failure(
           "CROSS_DEVICE_MOVE_NOT_SUPPORTED",
           "Move across filesystems or devices is not supported",
@@ -205,11 +234,24 @@ export async function moveTool(
         );
       }
 
+      const cause = {
+        cause: error instanceof Error ? error.message : String(error),
+        ...(causeCode === undefined ? {} : { cause_code: causeCode }),
+      };
+      if (causeCode === "EACCES" || causeCode === "EPERM") {
+        return failure(
+          "PERMISSION_DENIED",
+          "Move was refused by the operating system (permissions, or a file held open by another process)",
+          source.data,
+          cause,
+        );
+      }
+
       return failure(
         "CONCURRENCY_CONFLICT",
         "Move failed because the source or destination changed after the move plan was built",
         source.data,
-        { cause: error instanceof Error ? error.message : String(error) },
+        cause,
       );
     }
     crashIfFaultPoint("move.after_rename");
@@ -290,10 +332,74 @@ async function revalidatePathIsAbsent(path: string): Promise<DomainResult<undefi
   }
 }
 
-async function revalidateParentDirectory(path: string): Promise<DomainResult<undefined>> {
+// Both ends must still resolve inside the roots: an ancestor directory that
+// another process swapped for a link would otherwise move the file out of (or
+// into) the workspace, and the destination parent must be the directory that
+// was there when the move was planned.
+async function revalidateMoveParents(
+  source: string,
+  destination: string,
+  parentIdentity: DirectoryIdentity,
+  roots: readonly string[],
+): Promise<DomainResult<undefined>> {
+  const parent = await revalidateParentDirectory(dirname(destination), parentIdentity);
+  if (!parent.ok) {
+    return parent;
+  }
+  for (const path of [source, destination]) {
+    const containment = await validateParentInsideRoots(path, roots);
+    if (!containment.ok) {
+      return containment;
+    }
+  }
+  return success(undefined);
+}
+
+class MoveGuardError extends Error {
+  constructor(readonly result: FailureResult) {
+    super(result.error.message);
+  }
+}
+
+// birthtime as well: Linux readily reuses a just-freed inode number for a new
+// directory created at the same path. `symlink`: a configured root may itself
+// be a symlink or junction, so when the destination parent is a root, the
+// identity of that link is what must stay the same (validateParentInsideRoots
+// still checks where it resolves).
+type DirectoryIdentity =
+  | { dev: number; ino: number; birthtimeMs: number; symlink: boolean }
+  | undefined;
+
+async function directoryIdentity(path: string, roots: readonly string[]): Promise<DirectoryIdentity> {
   try {
-    const info = await stat(path);
-    if (!info.isDirectory()) {
+    const info = await lstat(path);
+    const symlink = info.isSymbolicLink();
+    return info.isDirectory() || (symlink && isConfiguredRoot(roots, path))
+      ? { dev: info.dev, ino: info.ino, birthtimeMs: info.birthtimeMs, symlink }
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+// lstat, not stat: a parent swapped for a symlink or junction to another
+// directory still "is a directory" through stat(), and the rename would move
+// the source wherever the link points. Comparing the identity also catches a
+// parent replaced by a different real directory.
+async function revalidateParentDirectory(
+  path: string,
+  expected: DirectoryIdentity,
+): Promise<DomainResult<undefined>> {
+  try {
+    const info = await lstat(path);
+    const symlink = info.isSymbolicLink();
+    if (
+      symlink !== expected?.symlink ||
+      (!symlink && !info.isDirectory()) ||
+      info.dev !== expected.dev ||
+      info.ino !== expected.ino ||
+      info.birthtimeMs !== expected.birthtimeMs
+    ) {
       return failure(
         "CONCURRENCY_CONFLICT",
         "Destination parent directory was replaced after the move plan was built",
@@ -310,6 +416,14 @@ async function revalidateParentDirectory(path: string): Promise<DomainResult<und
   }
 }
 
-function isNodeErrorWithCode(error: unknown, code: string): boolean {
-  return typeof error === "object" && error !== null && "code" in error && error.code === code;
+function errorCode(error: unknown): string | undefined {
+  return typeof error === "object" && error !== null && "code" in error && typeof error.code === "string"
+    ? error.code
+    : undefined;
+}
+
+// Strictly inside: the same path (for example a case-only rename) is not.
+function isStrictlyInside(parent: string, candidate: string): boolean {
+  const rel = relative(parent, candidate);
+  return rel !== "" && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
 }

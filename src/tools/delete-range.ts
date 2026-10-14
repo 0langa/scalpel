@@ -5,7 +5,7 @@ import { combineWarnings, recordJournal, snapshotState, textState } from "../cor
 import { readSnapshotForMutation, writeTextFileForMutation } from "../core/mutation.js";
 import { withPathLock } from "../core/path-lock.js";
 import { resolveWorkspacePath } from "../core/path-policy.js";
-import { findLineMarkerIndex, splitLinesWithEndings } from "../core/text.js";
+import { findLineMarkerIndex, splitBom, splitLinesWithEndings } from "../core/text.js";
 
 type DeleteRangeInput = {
   path: string;
@@ -58,7 +58,8 @@ export async function deleteRangeTool(
       return snapshot;
     }
 
-    const lines = splitLinesWithEndings(snapshot.data.content);
+    const { bom, body } = splitBom(snapshot.data.content);
+    const lines = splitLinesWithEndings(body);
     let startIndex: number;
     let endIndex: number;
 
@@ -102,7 +103,7 @@ export async function deleteRangeTool(
       endIndex = endMarker.data;
     }
 
-    const nextContent = [...lines.slice(0, startIndex), ...lines.slice(endIndex + 1)].join("");
+    const nextContent = bom + [...lines.slice(0, startIndex), ...lines.slice(endIndex + 1)].join("");
     const diff = createUnifiedDiff(resolved.data, snapshot.data.content, nextContent);
 
     if (input.dry_run === true) {
@@ -130,6 +131,7 @@ export async function deleteRangeTool(
       maxReadBytes: config.maxReadBytes,
       durability: config.durability,
       transactionDir: config.transactionDir,
+      roots: config.roots,
     });
     if (!writeResult.ok) {
       return writeResult;

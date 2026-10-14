@@ -1,4 +1,5 @@
-import { mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { chmod, mkdir, readdir, readFile, rename, stat, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, test } from "vitest";
@@ -10,6 +11,30 @@ import {
   recoverWriteTransactions,
 } from "../../../src/core/write-transaction.js";
 import { withTempDir } from "../../helpers/temp.js";
+import { holdWindowsFileLock } from "../../helpers/windows-lock.js";
+
+// process.umask() is process-wide, so it is restored as soon as `run` settles.
+async function withUmask<T>(mask: number, run: () => Promise<T>): Promise<T> {
+  const previous = process.umask(mask);
+  try {
+    return await run();
+  } finally {
+    process.umask(previous);
+  }
+}
+
+// The permission bits of the one `.scalpel-*.tmp` file a write in `directory`
+// has open.
+async function openTempFileMode(directory: string): Promise<number> {
+  const temps = (await readdir(directory)).filter(
+    (name) => name.startsWith(".scalpel-") && name.endsWith(".tmp"),
+  );
+  const [temp] = temps;
+  if (temp === undefined || temps.length !== 1) {
+    throw new Error(`expected one temp file in ${directory}, found ${String(temps.length)}`);
+  }
+  return (await stat(join(directory, temp))).mode & 0o7777;
+}
 
 describe("writeFileAtomic", () => {
   test("default mode writes through a temp file and leaves no temp files behind", async () => {
@@ -66,6 +91,150 @@ describe("writeFileAtomic", () => {
       await expect(readdir(transactionDir)).resolves.toEqual([]);
     });
   });
+
+  test("a write that fails before rename leaves the target, no temp file, and no record", async () => {
+    await withTempDir(async (root) => {
+      const transactionDir = join(root, ".scalpel-transactions");
+      const filePath = join(root, "target.txt");
+      await writeFile(filePath, "before\n", "utf8");
+
+      async function* failingChunks(): AsyncIterable<string> {
+        yield "partial";
+        await Promise.resolve();
+        throw new Error("disk full");
+      }
+
+      await expect(
+        writeFileAtomicStream(filePath, failingChunks(), {
+          transactionDir,
+          afterSha256: "0".repeat(64),
+          afterSizeBytes: 1,
+        }),
+      ).rejects.toThrow("disk full");
+
+      await expect(readFile(filePath, "utf8")).resolves.toBe("before\n");
+      await expect(readdir(root)).resolves.toEqual([".scalpel-transactions", "target.txt"]);
+      await expect(readdir(transactionDir)).resolves.toEqual([]);
+    });
+  });
+
+  test.skipIf(process.platform === "win32")("replacing a file keeps its permission bits", async () => {
+    await withTempDir(async (root) => {
+      const filePath = join(root, "run.sh");
+      await writeFile(filePath, "#!/bin/sh\necho old\n", "utf8");
+      await chmod(filePath, 0o750);
+
+      await writeFileAtomic(filePath, "#!/bin/sh\necho new\n");
+
+      expect((await stat(filePath)).mode & 0o777).toBe(0o750);
+      await expect(readFile(filePath, "utf8")).resolves.toBe("#!/bin/sh\necho new\n");
+    });
+  });
+
+  test.skipIf(process.platform === "win32").each([
+    { label: "0600", mode: 0o600 },
+    { label: "0640", mode: 0o640 },
+    { label: "0755", mode: 0o755 },
+  ])(
+    "the replacement of a $label file is owner-only while its content is written",
+    async ({ mode }) => {
+      await withTempDir(async (root) => {
+        const filePath = join(root, "target");
+        await writeFile(filePath, "old\n", "utf8");
+        await chmod(filePath, mode);
+        const content = "new\ncontent\n";
+
+        // Runs while the temp file is open: before the first chunk is written,
+        // between the chunks, and after the last one.
+        const tempModes: number[] = [];
+        async function* chunks(): AsyncIterable<string> {
+          tempModes.push(await openTempFileMode(root));
+          yield "new\n";
+          tempModes.push(await openTempFileMode(root));
+          yield "content\n";
+          tempModes.push(await openTempFileMode(root));
+        }
+
+        // Under this umask, a temp file created with the default mode would be
+        // readable by group and others (0644).
+        await withUmask(0o022, () =>
+          writeFileAtomicStream(filePath, chunks(), {
+            afterSha256: createHash("sha256").update(content).digest("hex"),
+            afterSizeBytes: Buffer.byteLength(content, "utf8"),
+          }),
+        );
+
+        expect(tempModes).toHaveLength(3);
+        for (const tempMode of tempModes) {
+          expect(tempMode & ~0o600, `temp file mode ${tempMode.toString(8)}`).toBe(0);
+        }
+        expect((await stat(filePath)).mode & 0o7777).toBe(mode);
+        await expect(readFile(filePath, "utf8")).resolves.toBe(content);
+        await expect(readdir(root)).resolves.toEqual(["target"]);
+      });
+    },
+  );
+
+  test.skipIf(process.platform === "win32")("a new file still gets 0666 minus the umask", async () => {
+    await withTempDir(async (root) => {
+      const filePath = join(root, "new.txt");
+
+      await withUmask(0o022, () => writeFileAtomic(filePath, "new\n"));
+
+      expect((await stat(filePath)).mode & 0o7777).toBe(0o644);
+    });
+  });
+
+  test.runIf(process.platform === "win32")(
+    "waits out a transient lock held by another process on Windows",
+    async () => {
+      await withTempDir(async (root) => {
+        const filePath = join(root, "locked.txt");
+        await writeFile(filePath, "before\n", "utf8");
+
+        const lock = await holdWindowsFileLock(filePath, 400);
+        const warnings = await writeFileAtomic(filePath, "after\n");
+        await lock.released;
+
+        expect(warnings).toEqual([]);
+        await expect(readFile(filePath, "utf8")).resolves.toBe("after\n");
+        await expect(readdir(root)).resolves.toEqual(["locked.txt"]);
+      });
+    },
+    20_000,
+  );
+
+  test.runIf(process.platform === "win32")(
+    "gives up after the retry budget and cleans up when the lock is not released",
+    async () => {
+      await withTempDir(async (root) => {
+        const transactionDir = join(root, ".scalpel-transactions");
+        const filePath = join(root, "locked.txt");
+        await writeFile(filePath, "before\n", "utf8");
+        const previousBudget = process.env.SCALPEL_RENAME_RETRY_MS;
+        process.env.SCALPEL_RENAME_RETRY_MS = "50";
+
+        const lock = await holdWindowsFileLock(filePath, 1_500);
+        try {
+          await expect(writeFileAtomic(filePath, "after\n", { transactionDir })).rejects.toMatchObject({
+            code: "EPERM",
+          });
+        } finally {
+          if (previousBudget === undefined) {
+            delete process.env.SCALPEL_RENAME_RETRY_MS;
+          } else {
+            process.env.SCALPEL_RENAME_RETRY_MS = previousBudget;
+          }
+          await lock.released;
+        }
+
+        await expect(readFile(filePath, "utf8")).resolves.toBe("before\n");
+        await expect(readdir(root)).resolves.toEqual([".scalpel-transactions", "locked.txt"]);
+        await expect(readdir(transactionDir)).resolves.toEqual([]);
+      });
+    },
+    20_000,
+  );
 
   test("recovery removes temp-written transaction temps without touching the target", async () => {
     await withTempDir(async (root) => {
@@ -255,6 +424,184 @@ describe("writeFileAtomic", () => {
       const summary = await recoverWriteTransactions(transactionDir);
 
       expect(summary).toMatchObject({ scanned: 1, unrecoverable: 1, quarantined: 1 });
+    });
+  });
+
+  test("recovery never deletes a file that a tampered record names as its temp path", async () => {
+    await withTempDir(async (root) => {
+      await withTempDir(async (outside) => {
+        const transactionDir = join(root, ".scalpel-transactions");
+        const victimPath = join(outside, "precious.txt");
+        await writeFile(victimPath, "keep me\n", "utf8");
+        await mkdir(transactionDir, { recursive: true });
+        await writeFile(
+          join(transactionDir, "tampered.json"),
+          JSON.stringify({
+            version: 1,
+            kind: "text_write",
+            id: "tampered",
+            targetPath: join(root, "target.txt"),
+            tempPath: victimPath,
+            afterSha256: "0".repeat(64),
+            afterSizeBytes: 1,
+            state: "started",
+            updatedAt: new Date().toISOString(),
+          }),
+          "utf8",
+        );
+
+        const summary = await recoverWriteTransactions(transactionDir);
+
+        expect(summary).toMatchObject({ scanned: 1, unrecoverable: 1, quarantined: 1, cleanedTemps: 0 });
+        await expect(readFile(victimPath, "utf8")).resolves.toBe("keep me\n");
+      });
+    });
+  });
+
+  test("recovery refuses to scan a transaction directory that is a symlink or junction", async () => {
+    await withTempDir(async (root) => {
+      await withTempDir(async (outside) => {
+        const transactionDir = join(root, ".scalpel-transactions");
+        await writeFile(join(outside, "settings.json"), "{\"user\": true}\n", "utf8");
+        await symlink(outside, transactionDir, process.platform === "win32" ? "junction" : "dir");
+
+        const summary = await recoverWriteTransactions(transactionDir);
+
+        expect(summary).toMatchObject({ scanned: 0, unrecoverable: 0, quarantined: 0 });
+        expect(summary.warnings).toHaveLength(1);
+        await expect(readdir(outside)).resolves.toEqual(["settings.json"]);
+      });
+    });
+  });
+
+  test("recovery with roots still reconciles records inside them", async () => {
+    await withTempDir(async (root) => {
+      const transactionDir = join(root, ".scalpel-transactions");
+      const filePath = join(root, "nested", "target.txt");
+      const tempPath = join(root, "nested", ".scalpel-leftover.tmp");
+      await mkdir(join(root, "nested"));
+      await writeFile(filePath, "before\n", "utf8");
+      await writeFile(tempPath, "after\n", "utf8");
+      const write = await beginWriteTransaction({ transactionDir, targetPath: filePath, tempPath, content: "after\n" });
+      await write.markTempWritten();
+      const sourcePath = join(root, "move-source.txt");
+      const destinationPath = join(root, "nested", "move-destination.txt");
+      await writeFile(sourcePath, "moved\n", "utf8");
+      const move = await beginMoveTransaction({ transactionDir, sourcePath, destinationPath });
+      await rename(sourcePath, destinationPath);
+      await move.markRenamed();
+
+      const summary = await recoverWriteTransactions(transactionDir, { roots: [root] });
+
+      expect(summary).toMatchObject({ scanned: 2, aborted: 1, committed: 1, cleanedTemps: 1, warnings: [] });
+      await expect(readFile(filePath, "utf8")).resolves.toBe("before\n");
+      await expect(readdir(join(root, "nested"))).resolves.toEqual(["move-destination.txt", "target.txt"]);
+      await expect(readdir(transactionDir)).resolves.toEqual([]);
+    });
+  });
+
+  test("recovery leaves records that name paths outside the roots untouched", async () => {
+    await withTempDir(async (root) => {
+      await withTempDir(async (outside) => {
+        // Another Scalpel's in-flight temp file, and files a crafted move
+        // record points at: recovery must not touch (or even stat) them.
+        const transactionDir = join(root, ".scalpel-transactions");
+        const outsideTemp = join(outside, ".scalpel-in-flight.tmp");
+        await writeFile(outsideTemp, "in flight\n", "utf8");
+        await writeFile(join(outside, "a.txt"), "a\n", "utf8");
+        await mkdir(transactionDir);
+        const records = {
+          "write.json": {
+            kind: "text_write",
+            targetPath: join(outside, "target.txt"),
+            tempPath: outsideTemp,
+            afterSha256: "0".repeat(64),
+            afterSizeBytes: 1,
+            state: "temp_written",
+          },
+          "move.json": {
+            kind: "move",
+            sourcePath: join(outside, "a.txt"),
+            destinationPath: join(root, "a.txt"),
+            state: "renamed",
+          },
+        };
+        for (const [name, record] of Object.entries(records)) {
+          await writeFile(
+            join(transactionDir, name),
+            JSON.stringify({ version: 1, id: name, updatedAt: new Date().toISOString(), ...record }),
+            "utf8",
+          );
+        }
+
+        const summary = await recoverWriteTransactions(transactionDir, { roots: [root] });
+
+        expect(summary).toMatchObject({
+          scanned: 2,
+          committed: 0,
+          aborted: 0,
+          unrecoverable: 0,
+          cleanedTemps: 0,
+          quarantined: 0,
+        });
+        expect(summary.warnings).toHaveLength(2);
+        expect(summary.warnings.every((warning) => warning.startsWith("TRANSACTION_RECOVERY_SKIPPED"))).toBe(true);
+        await expect(readFile(outsideTemp, "utf8")).resolves.toBe("in flight\n");
+        await expect(readdir(transactionDir)).resolves.toEqual(["move.json", "write.json"]);
+      });
+    });
+  });
+
+  test("recovery does not reach outside the roots through a link inside them", async () => {
+    await withTempDir(async (root) => {
+      await withTempDir(async (outside) => {
+        const transactionDir = join(root, ".scalpel-transactions");
+        const outsideTemp = join(outside, ".scalpel-in-flight.tmp");
+        await writeFile(outsideTemp, "in flight\n", "utf8");
+        await symlink(outside, join(root, "linked"), process.platform === "win32" ? "junction" : "dir");
+        await mkdir(transactionDir);
+        await writeFile(
+          join(transactionDir, "linked.json"),
+          JSON.stringify({
+            version: 1,
+            kind: "text_write",
+            id: "linked",
+            targetPath: join(root, "linked", "target.txt"),
+            tempPath: join(root, "linked", ".scalpel-in-flight.tmp"),
+            afterSha256: "0".repeat(64),
+            afterSizeBytes: 1,
+            state: "temp_written",
+            updatedAt: new Date().toISOString(),
+          }),
+          "utf8",
+        );
+
+        const summary = await recoverWriteTransactions(transactionDir, { roots: [root] });
+
+        expect(summary).toMatchObject({ scanned: 1, cleanedTemps: 0, quarantined: 0 });
+        expect(summary.warnings).toMatchObject([expect.stringMatching(/^TRANSACTION_RECOVERY_SKIPPED: linked\.json/)]);
+        await expect(readFile(outsideTemp, "utf8")).resolves.toBe("in flight\n");
+      });
+    });
+  });
+
+  test("recovery never moves a record into a quarantine directory that is a link", async () => {
+    await withTempDir(async (root) => {
+      await withTempDir(async (outside) => {
+        const transactionDir = join(root, ".scalpel-transactions");
+        await mkdir(transactionDir);
+        await writeFile(join(transactionDir, "payload.json"), "bytes the repository chose\n", "utf8");
+        await symlink(outside, join(transactionDir, "quarantine"), process.platform === "win32" ? "junction" : "dir");
+
+        const summary = await recoverWriteTransactions(transactionDir, { roots: [root] });
+
+        expect(summary).toMatchObject({ scanned: 1, unrecoverable: 1, quarantined: 0 });
+        expect(summary.warnings).toHaveLength(2);
+        await expect(readdir(outside)).resolves.toEqual([]);
+        await expect(readFile(join(transactionDir, "payload.json"), "utf8")).resolves.toBe(
+          "bytes the repository chose\n",
+        );
+      });
     });
   });
 });

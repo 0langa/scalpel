@@ -1,4 +1,4 @@
-import { appendFile, mkdir } from "node:fs/promises";
+import { appendFile, lstat, mkdir } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { dirname, join } from "node:path";
 
@@ -36,12 +36,25 @@ export async function recordJournal(
   };
 
   try {
+    // The default journal path is inside the workspace; never append through a
+    // symlink that could point at a file outside the configured roots.
+    if (await isSymlink(journalPath)) {
+      return ["JOURNAL_WRITE_FAILED: journal path is a symlink"];
+    }
     await mkdir(dirname(journalPath), { recursive: true });
     await appendFile(journalPath, `${JSON.stringify(event)}\n`, "utf8");
     return [];
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unable to write journal";
     return [`JOURNAL_WRITE_FAILED: ${message}`];
+  }
+}
+
+async function isSymlink(path: string): Promise<boolean> {
+  try {
+    return (await lstat(path)).isSymbolicLink();
+  } catch {
+    return false;
   }
 }
 

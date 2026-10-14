@@ -1,4 +1,4 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, test, vi } from "vitest";
@@ -20,6 +20,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 
 const { createConfig } = await import("../../../src/core/config.js");
 const { moveTool } = await import("../../../src/tools/move.js");
+const { recoverWriteTransactions } = await import("../../../src/core/write-transaction.js");
 const { withTempDir } = await import("../../helpers/temp.js");
 
 describe("moveTool cross-device handling", () => {
@@ -41,6 +42,27 @@ describe("moveTool cross-device handling", () => {
 
       await expect(readFile(sourcePath, "utf8")).resolves.toBe("hello\n");
       await expect(readFile(join(root, "moved.txt"), "utf8")).rejects.toThrow();
+    });
+  });
+
+  test("a failed rename leaves no move transaction record to be quarantined later", async () => {
+    await withTempDir(async (root) => {
+      const transactionDir = join(root, ".scalpel-transactions");
+      await writeFile(join(root, CROSS_DEVICE_MARKER), "source\n", "utf8");
+      await writeFile(join(root, "existing.txt"), "destination\n", "utf8");
+      const config = createConfig({ roots: [root], transactionDir });
+
+      const result = await moveTool(
+        { source: CROSS_DEVICE_MARKER, destination: "existing.txt", overwrite: true },
+        config,
+      );
+
+      expect(result.ok).toBe(false);
+      await expect(readdir(transactionDir)).resolves.toEqual([]);
+      await expect(recoverWriteTransactions(transactionDir)).resolves.toMatchObject({
+        scanned: 0,
+        unrecoverable: 0,
+      });
     });
   });
 });

@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, test } from "vitest";
@@ -99,6 +99,59 @@ describe("read-only tools", () => {
     });
   });
 
+  test("list_dir lists binary and oversized files without reading them", async () => {
+    await withTempDir(async (root) => {
+      await writeFile(join(root, "image.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0, 0, 0, 1]));
+      await writeFile(join(root, "large.txt"), "x".repeat(64), "utf8");
+      await writeFile(join(root, "notes.txt"), "hello\n", "utf8");
+
+      const config = createConfig({ roots: [root], maxReadBytes: 16 });
+      const result = await listDirTool({ path: "." }, config);
+
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.data.entries).toMatchObject([
+          { name: "image.png", isDirectory: false, isSymlink: false, sizeBytes: 8 },
+          { name: "large.txt", isDirectory: false, isSymlink: false, sizeBytes: 64 },
+          { name: "notes.txt", isDirectory: false, isSymlink: false, sizeBytes: 6 },
+        ]);
+      }
+    });
+  });
+
+  test("list_dir reports symlinks and junctions without following them", async () => {
+    await withTempDir(async (root) => {
+      await withTempDir(async (outside) => {
+        await writeFile(join(outside, "secret.txt"), "secret\n", "utf8");
+        await symlink(outside, join(root, "linked"), process.platform === "win32" ? "junction" : "dir");
+
+        const config = createConfig({ roots: [root] });
+        const result = await listDirTool({ path: "." }, config);
+
+        expect(result.ok).toBe(true);
+        if (result.ok) {
+          expect(result.data.entries).toMatchObject([
+            { name: "linked", isDirectory: false, isSymlink: true },
+          ]);
+        }
+      });
+    });
+  });
+
+  test("list_dir rejects a file path with INVALID_INPUT", async () => {
+    await withTempDir(async (root) => {
+      await writeFile(join(root, "notes.txt"), "hello\n", "utf8");
+
+      const config = createConfig({ roots: [root] });
+      const result = await listDirTool({ path: "notes.txt" }, config);
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error.code).toBe("INVALID_INPUT");
+      }
+    });
+  });
+
   test("read succeeds on an empty file", async () => {
     await withTempDir(async (root) => {
       const filePath = join(root, "empty.txt");
@@ -138,6 +191,52 @@ describe("read-only tools", () => {
     });
   });
 
+  test("ranged reads are bounded by maxReadBytes too", async () => {
+    await withTempDir(async (root) => {
+      await writeFile(join(root, "large.txt"), `short\n${"x".repeat(100)}\nshort\n`, "utf8");
+
+      const config = createConfig({ roots: [root], maxReadBytes: 16 });
+      const open = await readTool({ path: "large.txt", start_line: 1 }, config);
+      expect(open).toMatchObject({
+        ok: false,
+        error: { code: "FILE_TOO_LARGE", details: { max_bytes: 16, suggested_tool: "read_chunk" } },
+      });
+
+      const narrow = await readTool({ path: "large.txt", start_line: 3, end_line: 3 }, config);
+      expect(narrow).toMatchObject({ ok: true, data: { content: "short\n", lines: 3 } });
+    });
+  });
+
+  test("ranged reads past the end of a non-empty file fail instead of reporting zero lines", async () => {
+    await withTempDir(async (root) => {
+      await writeFile(join(root, "five.txt"), "1\n2\n3\n4\n5\n", "utf8");
+
+      const config = createConfig({ roots: [root] });
+      const result = await readTool({ path: "five.txt", start_line: 10 }, config);
+
+      expect(result).toMatchObject({
+        ok: false,
+        error: { code: "INVALID_LINE_RANGE", details: { total_lines: 5 } },
+      });
+    });
+  });
+
+  test("ranged reads keep CRLF line endings that straddle read chunks", async () => {
+    await withTempDir(async (root) => {
+      // 65_535 bytes of "a" puts the CR at the end of the first 64 KiB chunk.
+      const first = `${"a".repeat(65_535)}\r\n`;
+      await writeFile(join(root, "crlf.txt"), `${first}second\r\nthird`, "utf8");
+
+      const config = createConfig({ roots: [root], maxReadBytes: 1024 * 1024 });
+      const result = await readTool({ path: "crlf.txt", start_line: 2, end_line: 3 }, config);
+
+      expect(result).toMatchObject({
+        ok: true,
+        data: { content: "second\r\nthird", lines: 3, eol: "\r\n" },
+      });
+    });
+  });
+
   test("read_chunk returns bounded UTF-8 chunks", async () => {
     await withTempDir(async (root) => {
       await writeFile(join(root, "chunk.txt"), "a🙂b\n", "utf8");
@@ -155,6 +254,36 @@ describe("read-only tools", () => {
       expect(second.ok).toBe(true);
       if (second.ok) {
         expect(second.data.content).toBe("🙂");
+      }
+    });
+  });
+
+  test("read_chunk returns domain errors for missing files and directories", async () => {
+    await withTempDir(async (root) => {
+      await mkdir(join(root, "folder"));
+
+      const config = createConfig({ roots: [root] });
+      const missing = await readChunkTool({ path: "missing.txt" }, config);
+      const directory = await readChunkTool({ path: "folder" }, config);
+
+      expect(missing).toMatchObject({ ok: false, error: { code: "FILE_NOT_FOUND" } });
+      expect(directory).toMatchObject({ ok: false, error: { code: "INVALID_INPUT" } });
+    });
+  });
+
+  test("read_chunk hashes file bytes the same way stat does", async () => {
+    await withTempDir(async (root) => {
+      // Valid UTF-8 at the start, invalid byte later in the file.
+      await writeFile(join(root, "mixed.txt"), Buffer.from([0x61, 0x62, 0x0a, 0xff, 0x0a]));
+
+      const config = createConfig({ roots: [root] });
+      const chunk = await readChunkTool({ path: "mixed.txt", max_bytes: 3 }, config);
+      const stat = await statTool({ path: "mixed.txt" }, config);
+
+      expect(chunk.ok && stat.ok).toBe(true);
+      if (chunk.ok && stat.ok) {
+        expect(chunk.data.content).toBe("ab\n");
+        expect(chunk.data.sha256).toBe(stat.data.sha256);
       }
     });
   });

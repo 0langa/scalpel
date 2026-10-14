@@ -191,6 +191,22 @@ describe("patchTool", () => {
     });
   });
 
+  test("streaming patch keeps an astral character that ends a read chunk intact", async () => {
+    await withTempDir(async (root) => {
+      const filePath = join(root, "emoji.txt");
+      // 65_532 bytes + a 4-byte emoji fill the first 64 KiB read chunk exactly.
+      const content = `${"x".repeat(65_532)}😀\nzz\n`;
+      await writeFile(filePath, content, "utf8");
+
+      const config = createConfig({ roots: [root], maxReadBytes: 1024 });
+      const result = await patchTool({ path: "emoji.txt", old_string: "zz", new_string: "ok" }, config);
+
+      expect(result.ok).toBe(true);
+      const bytes = await readFile(filePath);
+      expect(bytes.equals(Buffer.from(`${"x".repeat(65_532)}😀\nok\n`, "utf8"))).toBe(true);
+    });
+  });
+
   test("streaming patch rejects ambiguous oversized unique matches", async () => {
     await withTempDir(async (root) => {
       const filePath = join(root, "ambiguous-large.txt");
