@@ -13,7 +13,7 @@ import {
   validatePathIsNotSymlink,
 } from "../core/mutation.js";
 import { withPathLock } from "../core/path-lock.js";
-import { resolveWorkspacePath } from "../core/path-policy.js";
+import { isConfiguredRoot, resolveWorkspacePath } from "../core/path-policy.js";
 import { renameWithRetry } from "../core/write-file-atomic.js";
 import { beginMoveTransaction } from "../core/write-transaction.js";
 
@@ -150,7 +150,7 @@ export async function moveTool(
     }
 
     await mkdir(dirname(destination.data), { recursive: true });
-    const parentIdentity = await directoryIdentity(dirname(destination.data));
+    const parentIdentity = await directoryIdentity(dirname(destination.data), config.roots);
 
     await runHardeningInterference(source.data, "BEFORE_COMMIT");
     await runHardeningInterference(dirname(source.data), "BEFORE_COMMIT");
@@ -362,14 +362,20 @@ class MoveGuardError extends Error {
 }
 
 // birthtime as well: Linux readily reuses a just-freed inode number for a new
-// directory created at the same path.
-type DirectoryIdentity = { dev: number; ino: number; birthtimeMs: number } | undefined;
+// directory created at the same path. `symlink`: a configured root may itself
+// be a symlink or junction, so when the destination parent is a root, the
+// identity of that link is what must stay the same (validateParentInsideRoots
+// still checks where it resolves).
+type DirectoryIdentity =
+  | { dev: number; ino: number; birthtimeMs: number; symlink: boolean }
+  | undefined;
 
-async function directoryIdentity(path: string): Promise<DirectoryIdentity> {
+async function directoryIdentity(path: string, roots: readonly string[]): Promise<DirectoryIdentity> {
   try {
     const info = await lstat(path);
-    return info.isDirectory()
-      ? { dev: info.dev, ino: info.ino, birthtimeMs: info.birthtimeMs }
+    const symlink = info.isSymbolicLink();
+    return info.isDirectory() || (symlink && isConfiguredRoot(roots, path))
+      ? { dev: info.dev, ino: info.ino, birthtimeMs: info.birthtimeMs, symlink }
       : undefined;
   } catch {
     return undefined;
@@ -386,9 +392,11 @@ async function revalidateParentDirectory(
 ): Promise<DomainResult<undefined>> {
   try {
     const info = await lstat(path);
+    const symlink = info.isSymbolicLink();
     if (
-      !info.isDirectory() ||
-      info.dev !== expected?.dev ||
+      symlink !== expected?.symlink ||
+      (!symlink && !info.isDirectory()) ||
+      info.dev !== expected.dev ||
       info.ino !== expected.ino ||
       info.birthtimeMs !== expected.birthtimeMs
     ) {

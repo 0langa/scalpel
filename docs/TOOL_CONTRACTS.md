@@ -86,7 +86,7 @@ Recursively searches files under a path.
 - invalid regex fails with `INVALID_PATTERN`
 - files larger than `config.maxReadBytes` are reported in `skipped_files` as `too_large`
 - binary, invalid UTF-8, and unreadable files (and unreadable directories) are reported in `skipped_files`
-- symlinks and junctions are never followed, because their targets can lie outside the configured roots; they are reported in `skipped_files` with reason `symlink` unless an exclude glob matches them
+- symlinks and junctions found while walking are never followed, because their targets can lie outside the configured roots; they are reported in `skipped_files` with reason `symlink` unless an exclude glob matches them. A configured root that is itself a symlink or junction is still searched
 - FIFOs, sockets, and device files are skipped
 - a missing search path fails with `FILE_NOT_FOUND`
 - line 1 of a file with a UTF-8 BOM is matched and returned without the BOM, so `^pattern` works there

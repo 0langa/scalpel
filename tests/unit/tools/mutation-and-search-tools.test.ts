@@ -669,6 +669,66 @@ describe("mutation and search tools", () => {
     }
   });
 
+  test("move into the top level of a root that is itself a symlink or junction", async () => {
+    await withTempDir(async (base) => {
+      const real = join(base, "real");
+      const linkedRoot = join(base, "linked-root");
+      await mkdir(join(real, "nested"), { recursive: true });
+      await writeFile(join(real, "nested", "old.txt"), "hello\n", "utf8");
+      await symlink(real, linkedRoot, process.platform === "win32" ? "junction" : "dir");
+
+      const config = createConfig({ roots: [linkedRoot] });
+      const result = await moveTool({ source: "nested/old.txt", destination: "new.txt" }, config);
+
+      expect(result).toMatchObject({ ok: true, data: { applied: true } });
+      await expect(readFile(join(real, "new.txt"), "utf8")).resolves.toBe("hello\n");
+      await expect(stat(join(real, "nested", "old.txt"))).rejects.toThrow();
+    });
+  });
+
+  test("move still detects a linked root that is swapped for another link before commit", async () => {
+    await withTempDir(async (base) => {
+      // Two roots, so the source stays valid and only the destination root's
+      // link changes: the parent identity check is what has to catch it.
+      const sourceRoot = join(base, "source-root");
+      const real = join(base, "real");
+      const other = join(base, "other");
+      const linkedRoot = join(base, "linked-root");
+      await mkdir(sourceRoot);
+      await mkdir(real);
+      await mkdir(other);
+      await writeFile(join(sourceRoot, "old.txt"), "hello\n", "utf8");
+      await symlink(real, linkedRoot, process.platform === "win32" ? "junction" : "dir");
+      const config = createConfig({
+        roots: [sourceRoot, linkedRoot],
+        transactionDir: join(base, "transactions"),
+      });
+
+      const previousPath = process.env.SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_PATH;
+      const previousMode = process.env.SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_MODE;
+      const previousTarget = process.env.SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_SYMLINK_TARGET;
+      process.env.SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_PATH = linkedRoot;
+      process.env.SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_MODE = "junction";
+      process.env.SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_SYMLINK_TARGET = other;
+
+      try {
+        const result = await moveTool(
+          { source: join(sourceRoot, "old.txt"), destination: join(linkedRoot, "new.txt") },
+          config,
+        );
+        expect(result).toMatchObject({ ok: false, error: { code: "CONCURRENCY_CONFLICT" } });
+      } finally {
+        restoreEnv("SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_PATH", previousPath);
+        restoreEnv("SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_MODE", previousMode);
+        restoreEnv("SCALPEL_HARDENING_INTERFERE_BEFORE_COMMIT_SYMLINK_TARGET", previousTarget);
+      }
+
+      await expect(readFile(join(sourceRoot, "old.txt"), "utf8")).resolves.toBe("hello\n");
+      await expect(readdir(other)).resolves.toEqual([]);
+      await expect(readdir(real)).resolves.toEqual([]);
+    });
+  });
+
   test("grep finds literal matches across nested files", async () => {
     await withTempDir(async (root) => {
       await mkdir(join(root, "src"), { recursive: true });
@@ -811,6 +871,30 @@ describe("mutation and search tools", () => {
         await symlink(outside, join(root, "linked"), process.platform === "win32" ? "junction" : "dir");
 
         const config = createConfig({ roots: [root], maxGrepResults: 10 });
+        const result = await grepTool({ path: ".", pattern: "needle" }, config);
+
+        expect(result.ok).toBe(true);
+        if (result.ok) {
+          expect(result.data.matches.map((match) => match.relativePath)).toEqual(["src/one.ts"]);
+          expect(result.data.skipped_files).toMatchObject([{ relativePath: "linked", reason: "symlink" }]);
+        }
+      });
+    });
+  });
+
+  test("grep searches a root that is itself a symlink or junction, without following links below it", async () => {
+    await withTempDir(async (base) => {
+      await withTempDir(async (outside) => {
+        const real = join(base, "real");
+        const linkedRoot = join(base, "linked-root");
+        const linkType = process.platform === "win32" ? "junction" : "dir";
+        await mkdir(join(real, "src"), { recursive: true });
+        await writeFile(join(real, "src", "one.ts"), "needle one\n", "utf8");
+        await writeFile(join(outside, "secret.txt"), "needle secret\n", "utf8");
+        await symlink(outside, join(real, "linked"), linkType);
+        await symlink(real, linkedRoot, linkType);
+
+        const config = createConfig({ roots: [linkedRoot], maxGrepResults: 10 });
         const result = await grepTool({ path: ".", pattern: "needle" }, config);
 
         expect(result.ok).toBe(true);

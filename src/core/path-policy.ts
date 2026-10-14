@@ -46,6 +46,13 @@ export function isInside(root: string, candidate: string): boolean {
   return rel === "" || (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
 }
 
+// True when `candidate` is one of the configured roots itself. A root may be a
+// symlink or junction (validatePathTraversal only rejects links below the
+// roots), so code that refuses links must still accept the root's own link.
+export function isConfiguredRoot(roots: readonly string[], candidate: string): boolean {
+  return roots.some((root) => relative(resolve(root), candidate) === "");
+}
+
 async function validatePathTraversal(
   root: string,
   candidate: string,

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { type ScalpelConfig } from "../core/config.js";
 import { failure, success, type DomainResult } from "../core/errors.js";
 import { readFileSnapshot } from "../core/file-metadata.js";
-import { resolveWorkspacePath, toRelativeDisplayPath } from "../core/path-policy.js";
+import { isConfiguredRoot, resolveWorkspacePath, toRelativeDisplayPath } from "../core/path-policy.js";
 import { splitBom } from "../core/text.js";
 
 type GrepInput = {
@@ -181,6 +181,9 @@ export async function grepTool(
 
     return !hasMore;
     },
+    // A configured root may itself be a symlink or junction; search through
+    // it. Links found while walking are still never followed.
+    isConfiguredRoot(config.roots, resolved.data),
   );
 
   const returnedMatches = matches.slice(0, limit);
@@ -206,17 +209,20 @@ function skipReason(code: string): SkipReason {
 }
 
 // Traversal never follows symlinks or junctions: their targets can sit outside
-// the configured roots, which every other tool already refuses to touch.
+// the configured roots, which every other tool already refuses to touch. The
+// only exception is the starting path when it is a configured root
+// (`followStart`), because a root may itself be a link.
 async function visit(
   path: string,
   config: ScalpelConfig,
   onDirectory: (directoryPath: string) => boolean,
   onSkipped: (skippedPath: string, reason: SkipReason) => void,
-  onFile: (filePath: string) => Promise<boolean>
+  onFile: (filePath: string) => Promise<boolean>,
+  followStart = false
 ): Promise<boolean> {
   let info: Stats;
   try {
-    info = await lstat(path);
+    info = followStart ? await stat(path) : await lstat(path);
   } catch {
     onSkipped(path, "unreadable");
     return true;
