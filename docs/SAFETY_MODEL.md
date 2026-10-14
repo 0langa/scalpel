@@ -119,6 +119,9 @@ Guaranteed today:
 - no traversal through existing symlink path segments
 - recursive and listing tools (`grep`, `list_dir`) do not follow symlinks or
   junctions they encounter; they report them instead
+- writes and moves re-resolve their directories (`realpath`) when they commit
+  and refuse with `SYMLINK_NOT_ALLOWED` if a directory created or swapped in by
+  another process after validation now leads outside the roots
 - workspace content cannot steer Scalpel outside the roots at startup: recovery
   only deletes `.scalpel-*.tmp` files beside a record's target and does not
   scan a symlinked transaction directory, and the journal is never appended
