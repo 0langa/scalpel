@@ -43,12 +43,16 @@ export function countInsertedLines(content: string): number {
 // new_string takes the line-ending style of the file it is written into. In a
 // CRLF file every LF follows a CR, so an old_string that starts with LF matches
 // right after a CR: a leading LF in new_string then completes that pair again.
+// An edit that changes nothing but the line breaks (old_string "\r\n", new_string
+// "\n") asks for exactly those line breaks; converting it would turn it into a
+// silent no-op, so such a new_string is kept as given.
 export function replacementForStyle(
   oldString: string,
   newString: string,
   style: LineEnding
 ): string {
-  return matchLineEndings(newString, style, oldString.startsWith("\n"));
+  const converted = matchLineEndings(newString, style, oldString.startsWith("\n"));
+  return converted === oldString && newString !== oldString ? newString : converted;
 }
 
 export function planExactReplace(

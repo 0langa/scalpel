@@ -122,7 +122,7 @@ pnpm validate
 - `patch` and `batch_edit` default to `occurrence: "unique"` and fail on ambiguity.
 - `insert` is line-oriented. If inserted content lacks a trailing newline, Scalpel normalizes it to the file's native EOL before splicing.
 - A UTF-8 BOM stays at the start of the file through every edit; line-oriented edits and `prepend` add text after it.
-- Text written into an existing file takes that file's line-ending style: LF line breaks sent to an all-CRLF file are written as CRLF, and CRLF sent to an all-LF file becomes LF. Mixed files and new files get the text as given; `create` always writes its content exactly.
+- Text written into an existing file takes that file's line-ending style: LF line breaks sent to an all-CRLF file are written as CRLF, and CRLF sent to an all-LF file becomes LF. Mixed files and new files get the text as given; `create` always writes its content exactly. A `patch` that changes nothing but line breaks (`old_string` `"\r\n"`, `new_string` `"\n"`) is applied as given, so a file can still be converted on purpose.
 - `replace_between_markers` preserves the original marker lines exactly once and rejects `new_content` that repeats either marker.
 - `read` succeeds on empty files and returns `content: ""`, `lines: 0`, and `range: { start_line: 1, end_line: 0 }`.
 - Mutating tools support hash and mtime preconditions where the target path exists; missing-file creation rejects supplied expectations.

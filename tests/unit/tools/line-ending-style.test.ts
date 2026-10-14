@@ -291,3 +291,63 @@ describe("other files keep their style", () => {
     });
   });
 });
+
+describe("edits that only change line breaks", () => {
+  test("patch applies a CRLF to LF conversion instead of a silent no-op, also when streaming", async () => {
+    for (const maxReadBytes of [undefined, 8]) {
+      await withFile(CRLF_FILE, async (root, filePath) => {
+        const result = await patchTool(
+          { path: "file.txt", old_string: "\r\n", new_string: "\n", occurrence: "all" },
+          createConfig({ roots: [root], ...(maxReadBytes === undefined ? {} : { maxReadBytes }) }),
+        );
+
+        expect(result.ok).toBe(true);
+        await expect(readFile(filePath, "utf8")).resolves.toBe("alpha\nbeta\ngamma\n");
+      });
+    }
+  });
+
+  test("patch applies an LF to CRLF conversion, also when streaming", async () => {
+    for (const maxReadBytes of [undefined, 8]) {
+      await withFile("alpha\nbeta\n", async (root, filePath) => {
+        const result = await patchTool(
+          { path: "file.txt", old_string: "\n", new_string: "\r\n", occurrence: "all" },
+          createConfig({ roots: [root], ...(maxReadBytes === undefined ? {} : { maxReadBytes }) }),
+        );
+
+        expect(result.ok).toBe(true);
+        await expect(readFile(filePath, "utf8")).resolves.toBe("alpha\r\nbeta\r\n");
+      });
+    }
+  });
+
+  test("a text change with LF line breaks in a CRLF file is still converted", async () => {
+    await withFile(CRLF_FILE, async (root, filePath) => {
+      const result = await patchTool(
+        { path: "file.txt", old_string: "alpha\r\nbeta", new_string: "alpha\nBETA" },
+        createConfig({ roots: [root] }),
+      );
+
+      expect(result.ok).toBe(true);
+      await expect(readFile(filePath, "utf8")).resolves.toBe("alpha\r\nBETA\r\ngamma\r\n");
+    });
+  });
+
+  test("batch_edit follows a line-break change made by an earlier edit", async () => {
+    await withFile(CRLF_FILE, async (root, filePath) => {
+      const result = await batchEditTool(
+        {
+          path: "file.txt",
+          edits: [
+            { old_string: "\r\n", new_string: "\n", occurrence: "all" },
+            { old_string: "beta", new_string: "beta\nbeta2" },
+          ],
+        },
+        createConfig({ roots: [root] }),
+      );
+
+      expect(result.ok).toBe(true);
+      await expect(readFile(filePath, "utf8")).resolves.toBe("alpha\nbeta\nbeta2\ngamma\n");
+    });
+  });
+});

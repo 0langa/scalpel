@@ -2,6 +2,7 @@ import { type ScalpelConfig } from "../core/config.js";
 import { createUnifiedDiff } from "../core/diff.js";
 import { failure, success, type DomainResult } from "../core/errors.js";
 import { combineWarnings, recordJournal, snapshotState, textState } from "../core/journal.js";
+import { detectLineEnding } from "../core/line-endings.js";
 import { readSnapshotForMutation, writeTextFileForMutation } from "../core/mutation.js";
 import { withPathLock } from "../core/path-lock.js";
 import { resolveWorkspacePath } from "../core/path-policy.js";
@@ -61,7 +62,8 @@ export async function batchEditTool(
       const plan = planExactReplace(
         content,
         edit.old_string,
-        replacementForStyle(edit.old_string, edit.new_string, snapshot.data.eol),
+        // The style of the text so far: an earlier edit may have changed the line breaks on purpose.
+        replacementForStyle(edit.old_string, edit.new_string, detectLineEnding(content)),
         edit.occurrence ?? "unique",
       );
 
