@@ -231,6 +231,10 @@ async function main(): Promise<void> {
   await writeReport(report);
   const requiredFailures = checks.filter((check) => check.severity === "required" && !check.passed);
   if (requiredFailures.length > 0) {
+    // Name the failures in the log too: CI only keeps the report as an artifact.
+    for (const check of requiredFailures) {
+      console.error(`FAILED: ${check.name}${check.detail === undefined ? "" : ` - ${check.detail}`}`);
+    }
     throw new Error(
       `Hardening suite failed ${String(requiredFailures.length)} required checks. Report: ${join(reportDir, "report.md")}`,
     );
