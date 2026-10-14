@@ -452,6 +452,37 @@ describe("mutation and search tools", () => {
     });
   });
 
+  test("move rejects moving a directory into itself without creating anything", async () => {
+    await withTempDir(async (root) => {
+      await mkdir(join(root, "pkg"), { recursive: true });
+      await writeFile(join(root, "pkg", "index.ts"), "export {};\n", "utf8");
+
+      const config = createConfig({ roots: [root] });
+      const result = await moveTool({ source: "pkg", destination: "pkg/nested/pkg" }, config);
+
+      expect(result).toMatchObject({ ok: false, error: { code: "INVALID_INPUT" } });
+      await expect(stat(join(root, "pkg", "nested"))).rejects.toThrow();
+      await expect(readFile(join(root, "pkg", "index.ts"), "utf8")).resolves.toBe("export {};\n");
+    });
+  });
+
+  test("move allows a case-only rename of a directory", async () => {
+    await withTempDir(async (root) => {
+      await mkdir(join(root, "Docs"), { recursive: true });
+      await writeFile(join(root, "Docs", "a.md"), "# a\n", "utf8");
+
+      const config = createConfig({ roots: [root] });
+      const caseInsensitive = process.platform === "win32" || process.platform === "darwin";
+      const result = await moveTool(
+        { source: "Docs", destination: "docs", ...(caseInsensitive ? { overwrite: true } : {}) },
+        config,
+      );
+
+      expect(result.ok).toBe(true);
+      await expect(readFile(join(root, "docs", "a.md"), "utf8")).resolves.toBe("# a\n");
+    });
+  });
+
   test("directory move accepts mtime preconditions and rejects sha preconditions", async () => {
     await withTempDir(async (root) => {
       await mkdir(join(root, "source-dir"));

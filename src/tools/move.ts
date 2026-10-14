@@ -1,5 +1,5 @@
-import { mkdir, rename, stat } from "node:fs/promises";
-import { dirname } from "node:path";
+import { mkdir, stat } from "node:fs/promises";
+import { dirname, isAbsolute, relative, sep } from "node:path";
 
 import { type ScalpelConfig } from "../core/config.js";
 import { failure, success, type DomainResult } from "../core/errors.js";
@@ -13,6 +13,7 @@ import {
 } from "../core/mutation.js";
 import { withPathLock } from "../core/path-lock.js";
 import { resolveWorkspacePath } from "../core/path-policy.js";
+import { renameWithRetry } from "../core/write-file-atomic.js";
 import { beginMoveTransaction } from "../core/write-transaction.js";
 
 type MoveInput = {
@@ -73,6 +74,14 @@ export async function moveTool(
       }
 
       return sourceStat;
+    }
+
+    if (sourceStat.data.isDirectory && isStrictlyInside(source.data, destination.data)) {
+      // Fail before mkdir() would create the destination parent inside the
+      // source, and with a clear error instead of rename()'s EINVAL.
+      return failure("INVALID_INPUT", "Cannot move a directory into itself", source.data, {
+        destination: destination.data,
+      });
     }
 
     let destinationExists = false;
@@ -194,9 +203,14 @@ export async function moveTool(
     });
     crashIfFaultPoint("move.after_transaction_start");
     try {
-      await rename(source.data, destination.data);
+      await renameWithRetry(source.data, destination.data);
     } catch (error) {
-      if (isNodeErrorWithCode(error, "EXDEV")) {
+      // rename() is atomic: when it fails nothing moved, so the record must not
+      // linger (with overwrite it would later be quarantined as "both exist").
+      await Promise.allSettled([transaction.complete()]);
+      const causeCode = errorCode(error);
+
+      if (causeCode === "EXDEV") {
         return failure(
           "CROSS_DEVICE_MOVE_NOT_SUPPORTED",
           "Move across filesystems or devices is not supported",
@@ -205,11 +219,24 @@ export async function moveTool(
         );
       }
 
+      const cause = {
+        cause: error instanceof Error ? error.message : String(error),
+        ...(causeCode === undefined ? {} : { cause_code: causeCode }),
+      };
+      if (causeCode === "EACCES" || causeCode === "EPERM") {
+        return failure(
+          "PERMISSION_DENIED",
+          "Move was refused by the operating system (permissions, or a file held open by another process)",
+          source.data,
+          cause,
+        );
+      }
+
       return failure(
         "CONCURRENCY_CONFLICT",
         "Move failed because the source or destination changed after the move plan was built",
         source.data,
-        { cause: error instanceof Error ? error.message : String(error) },
+        cause,
       );
     }
     crashIfFaultPoint("move.after_rename");
@@ -310,6 +337,14 @@ async function revalidateParentDirectory(path: string): Promise<DomainResult<und
   }
 }
 
-function isNodeErrorWithCode(error: unknown, code: string): boolean {
-  return typeof error === "object" && error !== null && "code" in error && error.code === code;
+function errorCode(error: unknown): string | undefined {
+  return typeof error === "object" && error !== null && "code" in error && typeof error.code === "string"
+    ? error.code
+    : undefined;
+}
+
+// Strictly inside: the same path (for example a case-only rename) is not.
+function isStrictlyInside(parent: string, candidate: string): boolean {
+  const rel = relative(parent, candidate);
+  return rel !== "" && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
 }
