@@ -111,6 +111,7 @@ export async function patchTool(
       maxReadBytes: config.maxReadBytes,
       durability: config.durability,
       transactionDir: config.transactionDir,
+      roots: config.roots,
     });
     if (!writeResult.ok) {
       return writeResult;
@@ -206,6 +207,7 @@ async function patchLargeExistingFile(
     maxReadBytes: config.maxReadBytes,
     durability: config.durability,
     transactionDir: config.transactionDir,
+    roots: config.roots,
   });
   if (!writeResult.ok) {
     return writeResult;

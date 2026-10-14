@@ -98,6 +98,7 @@ export async function appendTool(
       maxReadBytes: config.maxReadBytes,
       durability: config.durability,
       transactionDir: config.transactionDir,
+      roots: config.roots,
     });
     if (!writeResult.ok) {
       return writeResult;
@@ -169,6 +170,7 @@ async function appendLargeExistingFile(
     maxReadBytes: config.maxReadBytes,
     durability: config.durability,
     transactionDir: config.transactionDir,
+    roots: config.roots,
   });
   if (!writeResult.ok) {
     return writeResult;

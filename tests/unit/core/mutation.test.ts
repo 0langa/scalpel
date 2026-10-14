@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readdir, readFile, rename, stat, utimes, writeFile } from "node:fs/promises";
+import { readdir, readFile, rename, stat, symlink, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, test } from "vitest";
@@ -19,6 +19,27 @@ function sha256(content: string): string {
 }
 
 describe("commit-time revalidation", () => {
+  test("a write refuses a parent directory that resolves outside the roots", async () => {
+    await withTempDir(async (root) => {
+      await withTempDir(async (outside) => {
+        // As if another process created the directory as a link after the
+        // tool had resolved and validated the (then missing) path.
+        const linked = join(root, "linked");
+        await symlink(outside, linked, process.platform === "win32" ? "junction" : "dir");
+
+        const result = await writeTextFileForMutation({
+          path: join(linked, "new.txt"),
+          content: "escaped?\n",
+          before: undefined,
+          roots: [root],
+        });
+
+        expect(result).toMatchObject({ ok: false, error: { code: "SYMLINK_NOT_ALLOWED" } });
+        await expect(readdir(outside)).resolves.toEqual([]);
+      });
+    });
+  });
+
   test("a streamed write fails closed when the target is edited while the temp file is written", async () => {
     await withTempDir(async (root) => {
       const filePath = join(root, "large.txt");

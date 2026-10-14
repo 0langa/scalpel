@@ -41,7 +41,7 @@ export async function resolveWorkspacePath(
 
 // A `..` segment, not just a leading "..": `..cache` or `..notes.txt` directly
 // under a root are ordinary names inside it.
-function isInside(root: string, candidate: string): boolean {
+export function isInside(root: string, candidate: string): boolean {
   const rel = relative(root, candidate);
   return rel === "" || (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
 }

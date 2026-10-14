@@ -101,6 +101,7 @@ export async function prependTool(
       maxReadBytes: config.maxReadBytes,
       durability: config.durability,
       transactionDir: config.transactionDir,
+      roots: config.roots,
     });
     if (!writeResult.ok) {
       return writeResult;
@@ -176,6 +177,7 @@ async function prependLargeExistingFile(
     maxReadBytes: config.maxReadBytes,
     durability: config.durability,
     transactionDir: config.transactionDir,
+    roots: config.roots,
   });
   if (!writeResult.ok) {
     return writeResult;

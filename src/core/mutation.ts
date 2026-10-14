@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
-import { access, lstat, mkdir, rm, symlink } from "node:fs/promises";
-import { dirname } from "node:path";
+import { access, lstat, mkdir, realpath, rm, symlink } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
 
 import { failure, success, type DomainResult } from "./errors.js";
 import {
@@ -10,6 +10,7 @@ import {
   type FileSnapshot,
   type FileStat,
 } from "./file-metadata.js";
+import { isInside } from "./path-policy.js";
 import { writeFileAtomic, writeFileAtomicStream } from "./write-file-atomic.js";
 
 export type MutationPreconditionInput = {
@@ -26,6 +27,9 @@ export type MutationWriteInput = {
   maxReadBytes?: number | undefined;
   durability?: "default" | "strict" | undefined;
   transactionDir?: string | undefined;
+  // Configured roots: when given, the parent directory must still resolve
+  // inside one of them (through any symlinks) when the write commits.
+  roots?: readonly string[] | undefined;
 };
 
 export type StreamingMutationWriteInput = {
@@ -37,6 +41,9 @@ export type StreamingMutationWriteInput = {
   maxReadBytes?: number | undefined;
   durability?: "default" | "strict" | undefined;
   transactionDir?: string | undefined;
+  // Configured roots: when given, the parent directory must still resolve
+  // inside one of them (through any symlinks) when the write commits.
+  roots?: readonly string[] | undefined;
 };
 
 export async function readSnapshotForMutation(
@@ -156,6 +163,10 @@ export async function writeTextFileForMutation(
 ): Promise<DomainResult<{ warnings: string[] }>> {
   await runHardeningInterference(input.path, "BEFORE_COMMIT");
 
+  const containment = await validateParentInsideRoots(input.path, input.roots);
+  if (!containment.ok) {
+    return containment;
+  }
   const identity = await readTargetIdentity(input.path);
   const guard = await validateCommitGuard(input);
   if (!guard.ok) {
@@ -167,7 +178,7 @@ export async function writeTextFileForMutation(
     warnings = await writeFileAtomic(input.path, input.content, {
       ...(input.durability !== undefined ? { durability: input.durability } : {}),
       ...(input.transactionDir !== undefined ? { transactionDir: input.transactionDir } : {}),
-      beforeRename: () => assertTargetUnchanged(input.path, identity),
+      beforeRename: () => assertTargetUnchanged(input.path, identity, input.roots),
     });
   } catch (error) {
     if (error instanceof TargetChangedError) {
@@ -190,6 +201,10 @@ export async function writeTextFileStreamForMutation(
 ): Promise<DomainResult<{ warnings: string[] }>> {
   await runHardeningInterference(input.path, "BEFORE_COMMIT");
 
+  const containment = await validateParentInsideRoots(input.path, input.roots);
+  if (!containment.ok) {
+    return containment;
+  }
   const identity = await readTargetIdentity(input.path);
   const guard = await validateStreamingCommitGuard(input);
   if (!guard.ok) {
@@ -203,7 +218,7 @@ export async function writeTextFileStreamForMutation(
       afterSizeBytes: input.afterSizeBytes,
       ...(input.durability !== undefined ? { durability: input.durability } : {}),
       ...(input.transactionDir !== undefined ? { transactionDir: input.transactionDir } : {}),
-      beforeRename: () => assertTargetUnchanged(input.path, identity),
+      beforeRename: () => assertTargetUnchanged(input.path, identity, input.roots),
     });
   } catch (error) {
     if (error instanceof TargetChangedError) {
@@ -505,7 +520,15 @@ function sameEntry(left: EntryIdentity, right: EntryIdentity, compareContent: bo
 // The parent directory is checked by identity only (its mtime changes when the
 // temp file is created): if it, or any ancestor, was swapped for a symlink or
 // junction, lstat() resolves the parent to a different directory.
-async function assertTargetUnchanged(path: string, expected: TargetIdentity): Promise<void> {
+async function assertTargetUnchanged(
+  path: string,
+  expected: TargetIdentity,
+  roots: readonly string[] | undefined,
+): Promise<void> {
+  const containment = await validateParentInsideRoots(path, roots);
+  if (!containment.ok) {
+    throw new TargetChangedError(containment.error.message);
+  }
   const current = await readTargetIdentity(path);
   if (!sameEntry(expected.parent, current.parent, false)) {
     throw new TargetChangedError("Parent directory was replaced while Scalpel was writing the file");
@@ -513,6 +536,44 @@ async function assertTargetUnchanged(path: string, expected: TargetIdentity): Pr
   if (!sameEntry(expected.target, current.target, true)) {
     throw new TargetChangedError("File changed while Scalpel was writing its replacement");
   }
+}
+
+// resolveWorkspacePath() rejects symlinks in the path, but only for segments
+// that existed at that moment. A directory that a concurrent process creates
+// as (or swaps for) a link to somewhere else afterwards would carry the temp
+// file and the rename out of the roots. Resolve the parent for real and
+// require it to still be inside a configured root (also resolved, so a root
+// that itself sits behind a symlink keeps working).
+async function validateParentInsideRoots(
+  path: string,
+  roots: readonly string[] | undefined,
+): Promise<DomainResult<undefined>> {
+  if (roots === undefined) {
+    return success(undefined);
+  }
+
+  let realParent: string;
+  try {
+    realParent = await realpath(dirname(path));
+  } catch (error) {
+    return failure("FILE_NOT_FOUND", "Parent directory of the target disappeared", path, {
+      ...(errorCode(error) === undefined ? {} : { cause_code: errorCode(error) }),
+    });
+  }
+
+  const realRoots = await Promise.all(
+    roots.map((root) => realpath(root).catch(() => resolve(root))),
+  );
+  if (!realRoots.some((root) => isInside(root, realParent))) {
+    return failure(
+      "SYMLINK_NOT_ALLOWED",
+      "Target directory resolves outside the configured roots through a symlink or junction",
+      path,
+      { resolved_parent: realParent },
+    );
+  }
+
+  return success(undefined);
 }
 
 // Atomic replacement only needs write access to the directory, so without this
