@@ -47,7 +47,7 @@ Use this checklist to manually validate all 14 MCP file-editing tools against th
 
 ### Basic Listing
 - [ ] List `src/` — verify 7 items: `app.ts`, `config.py`, `data.json`, `empty.ts`, `helpers.py`, `types.d.ts`, `utils.ts`
-- [ ] List `docs/` — verify 4 items: `API.md`, `CHANGELOG.md`, `CONTRIBUTING.md`, `README.md`
+- [ ] List `docs/` — verify 4 items: `API.md`, `CHANGELOG.md`, `README.md`, `REPEATED_STRINGS.md`
 - [ ] List `config/` — verify 4 items: `deployment.yaml`, `manifest.json`, `pyproject.toml`, `settings.ini`
 - [ ] List `fixtures/` — verify 9 items
 
@@ -65,7 +65,7 @@ Use this checklist to manually validate all 14 MCP file-editing tools against th
 ### Basic Search
 - [ ] Grep `src/app.ts` for `"formatDate"` — verify all 3 variants found
 - [ ] Grep `src/utils.ts` for `"status: ok"` — verify 3 matches
-- [ ] Grep `docs/CONTRIBUTING.md` for `"TODO"` — verify 6 matches (3 unique lines + 3 duplicates)
+- [ ] Grep `docs/REPEATED_STRINGS.md` for `"TODO"` — verify 8 matching lines (the `## TODO Items` heading plus 7 TODO lines: one unique, two repeated 3 times)
 - [ ] Grep `fixtures/repeated-strings.txt` for `"alpha"` — verify 33+ matches
 
 ### Current Limits
