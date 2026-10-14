@@ -15,17 +15,22 @@ export type ReplacementMode =
   | { kind: "all" }
   | { kind: "indexes"; indexes: Set<number> };
 
+type StreamReadOptions = {
+  // Read chunk size; only tests lower it, to put chunk boundaries everywhere.
+  highWaterMark?: number | undefined;
+};
+
 export async function planStreamingExactReplace(input: {
   path: string;
   oldString: string;
   newString: string;
   occurrence: PatchOccurrence;
-}): Promise<DomainResult<StreamingReplacePlan>> {
+} & StreamReadOptions): Promise<DomainResult<StreamingReplacePlan>> {
   if (input.oldString.length === 0) {
     return failure("STRING_NOT_FOUND", "old_string was not found", input.path);
   }
 
-  const count = await countStreamingMatches(input.path, input.oldString);
+  const count = await countStreamingMatches(input.path, input.oldString, input.highWaterMark);
   if (!count.ok) {
     return count;
   }
@@ -42,6 +47,7 @@ export async function planStreamingExactReplace(input: {
     oldString: input.oldString,
     newString: input.newString,
     mode: mode.data,
+    highWaterMark: input.highWaterMark,
   })) {
     const buffer = typeof chunk === "string" ? Buffer.from(chunk, "utf8") : chunk;
     hash.update(buffer);
@@ -60,13 +66,13 @@ export async function* streamExactReplaceChunks(input: {
   oldString: string;
   newString: string;
   mode: ReplacementMode;
-}): AsyncIterable<string> {
+} & StreamReadOptions): AsyncIterable<string> {
   const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
   const carryLength = Math.max(0, input.oldString.length - 1);
   let pending = "";
   let seen = 0;
 
-  for await (const rawChunk of createReadStream(input.path)) {
+  for await (const rawChunk of createReadStream(input.path, readStreamOptions(input.highWaterMark))) {
     const buffer = Buffer.isBuffer(rawChunk) ? rawChunk : Buffer.from(rawChunk);
     if (buffer.includes(0)) {
       throw new Error("BINARY_FILE_NOT_SUPPORTED");
@@ -109,6 +115,7 @@ export async function* streamExactReplaceChunks(input: {
 async function countStreamingMatches(
   path: string,
   oldString: string,
+  highWaterMark: number | undefined,
 ): Promise<DomainResult<number>> {
   try {
     const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
@@ -116,7 +123,7 @@ async function countStreamingMatches(
     let pending = "";
     let matches = 0;
 
-    for await (const rawChunk of createReadStream(path)) {
+    for await (const rawChunk of createReadStream(path, readStreamOptions(highWaterMark))) {
       const buffer = Buffer.isBuffer(rawChunk) ? rawChunk : Buffer.from(rawChunk);
       if (buffer.includes(0)) {
         return failure("BINARY_FILE_NOT_SUPPORTED", "Binary files are not supported by text tools", path);
@@ -202,7 +209,12 @@ function replaceStablePrefix(
     cursor = index + oldString.length;
   }
 
-  const safeDiscard = Math.max(cursor, scanLimit);
+  let safeDiscard = Math.max(cursor, scanLimit);
+  if (safeDiscard > cursor && splitsSurrogatePair(content, safeDiscard)) {
+    // Each emitted chunk is UTF-8 encoded on its own, so a chunk must not end
+    // with half of a surrogate pair: both halves would be written as U+FFFD.
+    safeDiscard -= 1;
+  }
   output += content.slice(cursor, safeDiscard);
   return {
     replaced: { content: output, seen },
@@ -274,6 +286,16 @@ function countMatches(content: string, oldString: string): number {
     offset = index + oldString.length;
   }
   return count;
+}
+
+function splitsSurrogatePair(content: string, index: number): boolean {
+  const before = content.charCodeAt(index - 1);
+  const after = content.charCodeAt(index);
+  return before >= 0xd800 && before <= 0xdbff && after >= 0xdc00 && after <= 0xdfff;
+}
+
+function readStreamOptions(highWaterMark: number | undefined): { highWaterMark?: number } {
+  return highWaterMark === undefined ? {} : { highWaterMark };
 }
 
 function shouldReplace(mode: ReplacementMode, matchIndex: number): boolean {
