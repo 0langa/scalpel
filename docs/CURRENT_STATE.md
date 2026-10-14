@@ -132,6 +132,8 @@ first root in `.scalpel-transactions` and runs startup recovery before accepting
 MCP calls. Records include paths, hashes, sizes, and state where relevant, but
 not file content.
 
+`SCALPEL_RENAME_RETRY_MS` (Windows only, default `5000`) bounds how long a write or move retries a rename that another process blocks by holding the target open.
+
 `logLevel` controls the startup transaction-recovery summary logged to stderr; recovery runs with `unrecoverable` results or warnings are always logged regardless of `logLevel`. `maxDiffBytes` exists in config but is not yet enforced.
 
 ## MCP Resources

@@ -117,6 +117,12 @@ Guaranteed today:
 - no relative escape outside configured roots
 - no absolute path use outside configured roots
 - no traversal through existing symlink path segments
+- recursive and listing tools (`grep`, `list_dir`) do not follow symlinks or
+  junctions they encounter; they report them instead
+- workspace content cannot steer Scalpel outside the roots at startup: recovery
+  only deletes `.scalpel-*.tmp` files beside a record's target and does not
+  scan a symlinked transaction directory, and the journal is never appended
+  through a symlink
 
 ### Hidden Paths
 
@@ -181,6 +187,15 @@ When enabled with `SCALPEL_JOURNAL_ENABLED`, mutating tools append JSONL records
 
 This gives best-effort local filesystem replacement atomicity.
 
+Because the rename only needs write access to the directory, Scalpel checks the
+target's own write permission first and refuses read-only files with
+`PERMISSION_DENIED`. On POSIX the temp file gets the replaced file's permission
+bits before the rename. On Windows, a rename that fails because another process
+holds the target open without delete sharing (antivirus, indexers, sync
+clients, editors) is retried with a short backoff for up to
+`SCALPEL_RENAME_RETRY_MS` (default 5000 ms); the target is untouched until a
+rename succeeds.
+
 When `SCALPEL_DURABILITY=strict` is set, content writes also flush the temp file before rename and attempt to flush the parent directory after rename. Parent-directory flush support is platform-dependent, especially on Windows. Unsupported parent flushes are reported as non-fatal warnings.
 
 Text writes and `move` also create metadata-only transaction records under
@@ -199,6 +214,10 @@ Not guaranteed today:
 - cross-platform persistence guarantees for every filesystem and power-loss scenario
 - guaranteed parent-directory `fsync` on every platform
 - protection against malicious same-user changes after success is reported
+- preserving what belongs to the old file rather than its content: a replaced
+  file is a new file, so hard links to it are detached, and Windows attributes
+  other than read-only (hidden, system), explicit ACLs, owner/group on POSIX,
+  and NTFS alternate data streams are not carried over
 
 `move` detects a cross-device or cross-filesystem rename via the OS `EXDEV`
 error and rejects it with `CROSS_DEVICE_MOVE_NOT_SUPPORTED` before any partial
