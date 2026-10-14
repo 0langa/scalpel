@@ -20,6 +20,7 @@ All notable changes to Scalpel are documented here.
 - Names that merely start with two dots (`..cache`, `..notes.txt`) were rejected as outside the root.
 - A UTF-8 BOM was dropped by streaming `patch` and `delete_range` of line 1, and pushed mid-file by `prepend` and `insert` at line 1; ranged reads and `read_chunk` stripped it while full reads kept it; `grep` could not anchor `^` on line 1.
 - `insert` after a final line without a newline glued the text onto that line.
+- Edits wrote their new text with whatever line breaks the client sent, so LF text inserted into a CRLF file (or CRLF into an LF file) left it with mixed line endings. `patch`, `batch_edit`, `insert`, `replace_between_markers`, `append`, and `prepend`, including the streaming paths, now write new text in the file's own style.
 - Every edit replaced the file's mode (scripts lost the executable bit); modes are now kept on POSIX, and read-only files fail with `PERMISSION_DENIED` instead of being replaced.
 - On Windows, edits and moves failed with a raw `EPERM` whenever antivirus, the indexer, a sync client or an editor briefly held the file; the rename is now retried (`SCALPEL_RENAME_RETRY_MS`, default 5000).
 - `list_dir` failed for any directory containing a binary or non-UTF-8 file and read every file in full; `stat` and `move` failed on small binary files.
@@ -31,6 +32,10 @@ All notable changes to Scalpel are documented here.
 ### Added
 
 - Property-based tests (fast-check) for the streaming replace, ranged reads, `insert`, and `delete_range`.
+
+### Removed
+
+- The unused `memfs` dev dependency and the placeholder `allowBuilds` entries for packages Scalpel never installs.
 
 ## [1.0.0] - 2026-07-03
 

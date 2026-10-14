@@ -16,7 +16,8 @@ import {
 import { failure, success, type DomainResult } from "../core/errors.js";
 import { withPathLock } from "../core/path-lock.js";
 import { resolveWorkspacePath } from "../core/path-policy.js";
-import { countLines } from "../core/line-endings.js";
+import { readLineEndingStyleIfNeeded } from "../core/file-metadata.js";
+import { countLines, matchLineEndings } from "../core/line-endings.js";
 import { countInsertedLines, splitBom, UTF8_BOM } from "../core/text.js";
 
 const UTF8_BOM_BYTES = Buffer.from(UTF8_BOM, "utf8");
@@ -68,7 +69,8 @@ export async function prependTool(
 
     const existing = before.data?.content ?? "";
     const { bom, body } = splitBom(existing);
-    const nextContent = `${bom}${bom === "" ? input.content : splitBom(input.content).body}${body}`;
+    const content = matchLineEndings(input.content, before.data?.eol ?? "none");
+    const nextContent = `${bom}${bom === "" ? content : splitBom(content).body}${body}`;
     const diff = createUnifiedDiff(resolved.data, existing, nextContent);
     const result = {
       absolutePath: resolved.data,
@@ -162,10 +164,16 @@ async function prependLargeExistingFile(
     return failure("UNSUPPORTED_ENCODING", "File text metadata could not be computed", path);
   }
 
+  const style = await readLineEndingStyleIfNeeded(path, input.content);
+  if (!style.ok) {
+    return style;
+  }
+  const content = matchLineEndings(input.content, style.data.eol);
+
   // Keep an existing BOM at offset 0: emit it, then the new content, then the
   // rest of the file after the BOM bytes.
   const skipBytes = (await startsWithUtf8Bom(path)) ? UTF8_BOM_BYTES.length : 0;
-  const prefix = skipBytes === 0 ? input.content : `${UTF8_BOM}${splitBom(input.content).body}`;
+  const prefix = skipBytes === 0 ? content : `${UTF8_BOM}${splitBom(content).body}`;
   const afterSizeBytes = Buffer.byteLength(prefix, "utf8") + before.data.sizeBytes - skipBytes;
   const afterSha256 = await hashChunks(prependChunks(prefix, path, skipBytes));
   const writeResult = await writeTextFileStreamForMutation({

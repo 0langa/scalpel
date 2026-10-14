@@ -8,6 +8,9 @@ import { failure, success, type DomainResult } from "./errors.js";
 
 export type TextKind = "utf8" | "binary" | "non_utf8" | "unknown";
 
+const CR_BYTE = 0x0d;
+const LF_BYTE = 0x0a;
+
 type ReadOptions = {
   maxBytes?: number | undefined;
   suggestedTool?: string | undefined;
@@ -338,6 +341,55 @@ export async function readTextMetadata(path: string): Promise<DomainResult<TextM
       path
     );
   }
+}
+
+// Line-ending style of a file too large to load whole. CR and LF are single
+// bytes that never occur inside a multi-byte UTF-8 sequence, so the raw bytes
+// can be scanned without decoding. `endsWithCr` tells callers that append text
+// whether a leading LF would complete a CRLF pair split at the end of the file.
+export async function readLineEndingStyle(
+  path: string,
+  // highWaterMark is the read chunk size; only tests lower it.
+  options: { highWaterMark?: number | undefined } = {}
+): Promise<DomainResult<{ eol: LineEnding; endsWithCr: boolean }>> {
+  try {
+    let eol: LineEnding = "none";
+    let previousByte = -1;
+    const streamOptions =
+      options.highWaterMark === undefined ? {} : { highWaterMark: options.highWaterMark };
+
+    for await (const chunk of createReadStream(path, streamOptions)) {
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      let newline = eol === "mixed" ? -1 : buffer.indexOf(LF_BYTE);
+      while (newline !== -1) {
+        const before = newline > 0 ? buffer[newline - 1] : previousByte;
+        eol = mergeLineEnding(eol, before === CR_BYTE ? "\r\n" : "\n");
+        newline = eol === "mixed" ? -1 : buffer.indexOf(LF_BYTE, newline + 1);
+      }
+      if (buffer.length > 0) {
+        previousByte = buffer[buffer.length - 1] ?? previousByte;
+      }
+    }
+
+    return success({ eol, endsWithCr: previousByte === CR_BYTE });
+  } catch (error) {
+    return failure(
+      "FILE_NOT_FOUND",
+      error instanceof Error ? error.message : `Unable to read ${path}`,
+      path
+    );
+  }
+}
+
+// matchLineEndings never changes text without a line break, so such text skips the extra pass over a
+// large file (and reports "none", which leaves it as it is).
+export async function readLineEndingStyleIfNeeded(
+  path: string,
+  text: string
+): Promise<DomainResult<{ eol: LineEnding; endsWithCr: boolean }>> {
+  return text.includes("\n")
+    ? readLineEndingStyle(path)
+    : success({ eol: "none", endsWithCr: false });
 }
 
 export async function classifyFile(path: string, sampleBytes = 8192): Promise<DomainResult<TextKind>> {

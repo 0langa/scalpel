@@ -1,6 +1,7 @@
 import { type ScalpelConfig } from "../core/config.js";
 import { createUnifiedDiff } from "../core/diff.js";
 import { failure, success, type DomainResult } from "../core/errors.js";
+import { readLineEndingStyleIfNeeded } from "../core/file-metadata.js";
 import { combineWarnings, recordJournal, snapshotState, textState } from "../core/journal.js";
 import {
   readPathStatForMutation,
@@ -15,7 +16,7 @@ import {
   streamExactReplaceChunks,
   type ReplacementMode,
 } from "../core/streaming-replace.js";
-import { planExactReplace, type PatchOccurrence } from "../core/text.js";
+import { planExactReplace, replacementForStyle, type PatchOccurrence } from "../core/text.js";
 
 type PatchInput = {
   path: string;
@@ -68,7 +69,7 @@ export async function patchTool(
     const plan = planExactReplace(
       snapshot.data.content,
       input.old_string,
-      input.new_string,
+      replacementForStyle(input.old_string, input.new_string, snapshot.data.eol),
       input.occurrence ?? "unique",
     );
 
@@ -175,10 +176,16 @@ async function patchLargeExistingFile(
     return failure("UNSUPPORTED_ENCODING", "File text metadata could not be computed", path);
   }
 
+  const style = await readLineEndingStyleIfNeeded(path, input.new_string);
+  if (!style.ok) {
+    return style;
+  }
+  const newString = replacementForStyle(input.old_string, input.new_string, style.data.eol);
+
   const plan = await planStreamingExactReplace({
     path,
     oldString: input.old_string,
-    newString: input.new_string,
+    newString,
     occurrence,
   });
   if (!plan.ok) {
@@ -198,7 +205,7 @@ async function patchLargeExistingFile(
     chunks: streamExactReplaceChunks({
       path,
       oldString: input.old_string,
-      newString: input.new_string,
+      newString,
       mode: replacementModeForAppliedPatch(occurrence),
     }),
     before: before.data,

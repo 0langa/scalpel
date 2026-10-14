@@ -16,7 +16,8 @@ import {
 import { failure, success, type DomainResult } from "../core/errors.js";
 import { withPathLock } from "../core/path-lock.js";
 import { resolveWorkspacePath } from "../core/path-policy.js";
-import { countLines } from "../core/line-endings.js";
+import { readLineEndingStyleIfNeeded } from "../core/file-metadata.js";
+import { countLines, matchLineEndings } from "../core/line-endings.js";
 import { countInsertedLines } from "../core/text.js";
 
 type AppendInput = {
@@ -65,7 +66,12 @@ export async function appendTool(
     }
 
     const beforeContent = before.data?.content ?? "";
-    const afterContent = `${beforeContent}${input.content}`;
+    const content = matchLineEndings(
+      input.content,
+      before.data?.eol ?? "none",
+      beforeContent.endsWith("\r"),
+    );
+    const afterContent = `${beforeContent}${content}`;
     const diff = createUnifiedDiff(resolved.data, beforeContent, afterContent);
     const result = {
       absolutePath: resolved.data,
@@ -159,11 +165,16 @@ async function appendLargeExistingFile(
     return failure("UNSUPPORTED_ENCODING", "File text metadata could not be computed", path);
   }
 
-  const afterSizeBytes = before.data.sizeBytes + Buffer.byteLength(input.content, "utf8");
-  const afterSha256 = await hashFileThenContent(path, input.content);
+  const style = await readLineEndingStyleIfNeeded(path, input.content);
+  if (!style.ok) {
+    return style;
+  }
+  const content = matchLineEndings(input.content, style.data.eol, style.data.endsWithCr);
+  const afterSizeBytes = before.data.sizeBytes + Buffer.byteLength(content, "utf8");
+  const afterSha256 = await hashFileThenContent(path, content);
   const writeResult = await writeTextFileStreamForMutation({
     path,
-    chunks: appendChunks(path, input.content),
+    chunks: appendChunks(path, content),
     before: before.data,
     afterSha256,
     afterSizeBytes,

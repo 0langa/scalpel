@@ -15,6 +15,25 @@ export function detectLineEnding(content: string): LineEnding {
   return "\n";
 }
 
+// Text written into an existing file takes that file's line-ending style, so an
+// edit never leaves stray LF lines in a CRLF file (or CRLF lines in an LF file).
+// Files that are already mixed, or have no line break yet, get the text as given.
+// `afterCr` means the text lands right after a CR of the file: a leading LF then
+// completes that CRLF pair and stays a bare LF.
+export function matchLineEndings(text: string, style: LineEnding, afterCr = false): string {
+  if (style === "\r\n") {
+    return text.replace(/\r?\n/g, (lineBreak, offset: number) =>
+      lineBreak === "\n" && offset === 0 && afterCr ? lineBreak : "\r\n",
+    );
+  }
+
+  if (style === "\n") {
+    return text.replace(/\r\n/g, "\n");
+  }
+
+  return text;
+}
+
 export function countLines(content: string): number {
   if (content.length === 0) {
     return 0;
